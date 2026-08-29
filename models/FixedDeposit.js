@@ -1,10 +1,7 @@
 import mongoose from "mongoose";
 const { Schema } = mongoose;
 
-/**
- * FIXED DEPOSIT — self-contained; nothing about an FD needs its own child
- * collection (no unbounded sub-list), so it stays a single flat document.
- */
+
 const fixedDepositSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
