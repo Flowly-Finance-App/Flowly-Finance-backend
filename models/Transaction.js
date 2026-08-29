@@ -1,17 +1,7 @@
 import mongoose from "mongoose";
 const { Schema } = mongoose;
 
-/**
- * TRANSACTION — the account ledger, using the MongoDB Bucket Pattern.
- *
- * An account can accumulate tens of thousands of transactions over its
- * life, so a plain array on Account would eventually break the 16MB
- * document limit, and one-document-per-transaction (fully un-embedded)
- * needs a write for every single entry. The bucket pattern keeps entries
- * embedded but grouped into small monthly documents (~200 entries each,
- * enforced by the app), so it stays fast to write AND scales indefinitely —
- * a new bucket just opens automatically next month.
- */
+
 const transactionEntrySchema = new Schema(
   {
     type: { type: String, enum: ["credit", "debit"], required: true },
