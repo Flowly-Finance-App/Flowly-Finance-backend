@@ -1,10 +1,7 @@
 import mongoose from "mongoose";
 const { Schema } = mongoose;
 
-/**
- * SUPPORT TICKET — messages[] is embedded (a bounded conversation thread,
- * always read together with its ticket, never queried on its own).
- */
+
 const supportTicketSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
