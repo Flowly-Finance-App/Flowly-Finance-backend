@@ -27,7 +27,7 @@ const documentSchema = new mongoose.Schema(
   },
   {
     timestamps: { createdAt: "uploadedAt", updatedAt: false },
-  }
+  },
 );
 
 export default mongoose.model("Document", documentSchema);
