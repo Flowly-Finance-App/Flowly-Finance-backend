@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      minlength: 3,
+      minlength: 2,
       maxlength: 100,
     },
 
@@ -25,10 +25,26 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
-    pinHash: {
+    password: {
       type: String,
-      required: true,
+      required: false,
       select: false,
+    },
+
+    mpinHash: {
+      type: String,
+      select: false,
+    },
+
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
     },
 
     role: {
@@ -38,21 +54,34 @@ const userSchema = new mongoose.Schema(
     },
 
     personalDetails: {
-      type: String,
+      type: Object,
+      default: {},
     },
 
     contactDetails: {
-      type: String,
+      type: Object,
+      default: {},
     },
 
     address: {
       type: String,
+      default: "",
     },
 
     kycStatus: {
       type: String,
       enum: ["pending", "under_verification", "verified", "rejected"],
       default: "pending",
+    },
+
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+    },
+
+    lockUntil: {
+      type: Date,
+      default: null,
     },
 
     status: {
