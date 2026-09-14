@@ -1,9 +1,6 @@
-import LoanProduct from "../models/Loan.js";
+import LoanProduct from "../models/LoanProduct.js";
 import LoanApplication from "../models/LoanApplication.js";
-import Account from "../models/Account.js";
-import TransactionBucket from "../models/Transaction.js";
 import User from "../models/User.js";
-
 
 const calculateEMI = (principal, annualRate, tenureMonths) => {
   const r = annualRate / (12 * 100);
@@ -24,7 +21,6 @@ export const getLoanProducts = async (req, res) => {
   }
 };
 
-
 export const seedLoanProducts = async (req, res) => {
   try {
     const count = await LoanProduct.countDocuments();
@@ -39,33 +35,41 @@ export const seedLoanProducts = async (req, res) => {
     const defaultProducts = [
       {
         productName: "Personal Loan",
+        loanType: "Personal",
         interestRate: 12.0,
-        minimumAmount: 10000,
-        maximumAmount: 500000,
+        minAmount: 10000,
+        maxAmount: 500000,
+        maxTenure: 24,
         tenure: 24,
         isActive: true,
       },
       {
         productName: "Vehicle Loan",
+        loanType: "Vehicle",
         interestRate: 9.5,
-        minimumAmount: 50000,
-        maximumAmount: 1500000,
+        minAmount: 50000,
+        maxAmount: 1500000,
+        maxTenure: 36,
         tenure: 36,
         isActive: true,
       },
       {
         productName: "Business Loan",
+        loanType: "Business",
         interestRate: 14.0,
-        minimumAmount: 100000,
-        maximumAmount: 2000000,
+        minAmount: 100000,
+        maxAmount: 2000000,
+        maxTenure: 48,
         tenure: 48,
         isActive: true,
       },
       {
         productName: "Education Loan",
+        loanType: "Education",
         interestRate: 8.5,
-        minimumAmount: 25000,
-        maximumAmount: 1000000,
+        minAmount: 25000,
+        maxAmount: 1000000,
+        maxTenure: 60,
         tenure: 60,
         isActive: true,
       },
@@ -84,7 +88,6 @@ export const seedLoanProducts = async (req, res) => {
   }
 };
 
-
 export const applyLoan = async (req, res) => {
   try {
     const { productId, productName, requestedAmount, tenureMonths, purpose } = req.body;
@@ -97,7 +100,6 @@ export const applyLoan = async (req, res) => {
       });
     }
 
-    //  KYC status cheking
     const user = await User.findById(req.user._id);
     if (user.kycStatus !== "verified") {
       return res.status(403).json({
@@ -124,6 +126,7 @@ export const applyLoan = async (req, res) => {
       user: req.user._id,
       product: loanProduct ? loanProduct._id : undefined,
       productName: selectedProductName,
+      principal: amount,
       requestedAmount: amount,
       tenureMonths: months,
       interestRate,
@@ -145,7 +148,6 @@ export const applyLoan = async (req, res) => {
   }
 };
 
-
 export const getUserApplications = async (req, res) => {
   try {
     const applications = await LoanApplication.find({ user: req.user._id }).sort({
@@ -160,11 +162,10 @@ export const getUserApplications = async (req, res) => {
   }
 };
 
-
 export const getAllApplications = async (req, res) => {
   try {
     const { status } = req.query;
-    const filter = status ? { status } : {};
+    const filter = status ? { status: status.toLowerCase() } : {};
 
     const applications = await LoanApplication.find(filter)
       .populate("user", "name email phone kycStatus")
@@ -182,19 +183,19 @@ export const getAllApplications = async (req, res) => {
   }
 };
 
-
 export const reviewLoanApplication = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, rejectionReason } = req.body; // "approved" | "rejected" | "under_review"
+    const { status, rejectionReason } = req.body;
+    const normalizedStatus = status ? status.toLowerCase() : "";
 
-    if (!["approved", "rejected", "under_review"].includes(status)) {
+    if (!["approved", "rejected", "under_review"].includes(normalizedStatus)) {
       return res.status(400).json({
         message: "Invalid status. Must be 'approved', 'rejected', or 'under_review'.",
       });
     }
 
-    if (status === "rejected" && !rejectionReason) {
+    if (normalizedStatus === "rejected" && !rejectionReason) {
       return res.status(400).json({
         message: "Please provide a rejection reason when rejecting a loan.",
       });
@@ -208,102 +209,22 @@ export const reviewLoanApplication = async (req, res) => {
       });
     }
 
-    application.status = status;
+    application.status = normalizedStatus;
     application.reviewedBy = req.user._id;
     application.reviewedAt = new Date();
-    if (status === "rejected") {
+    if (normalizedStatus === "rejected") {
       application.rejectionReason = rejectionReason;
     }
 
     await application.save();
 
     return res.status(200).json({
-      message: `Loan application ${status} successfully`,
+      message: `Loan application ${normalizedStatus} successfully`,
       application,
     });
   } catch (error) {
     return res.status(500).json({
       message: "Failed to review loan application",
-      error: error.message,
-    });
-  }
-};
-
-
-export const disburseLoan = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const application = await LoanApplication.findById(id);
-
-    if (!application) {
-      return res.status(404).json({
-        message: "Loan application not found",
-      });
-    }
-
-    if (application.status !== "approved") {
-      return res.status(400).json({
-        message: `Loan cannot be disbursed because current status is '${application.status}'. Only 'approved' loans can be disbursed.`,
-      });
-    }
-
-    const account = await Account.findOne({ user: application.user });
-    if (!account) {
-      return res.status(404).json({
-        message: "Customer bank account not found for disbursement",
-      });
-    }
-
-    // Credit loan amount to customer account
-    account.balance += application.requestedAmount;
-    await account.save();
-
-    // Log transaction entry
-    const date = new Date();
-    const periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-
-    let bucket = await TransactionBucket.findOne({
-      account: account._id,
-      periodKey,
-    });
-
-    const entry = {
-      type: "credit",
-      category: "withdrawal", // disbursement
-      amount: application.requestedAmount,
-      balanceAfter: account.balance,
-      relatedLoan: application._id,
-      description: `Loan Disbursement: ${application.productName} (App ID: ${application._id})`,
-      referenceNumber: `DISB${Date.now()}`,
-      createdAt: date,
-    };
-
-    if (!bucket) {
-      await TransactionBucket.create({
-        account: account._id,
-        user: application.user,
-        periodKey,
-        entryCount: 1,
-        entries: [entry],
-      });
-    } else {
-      bucket.entries.push(entry);
-      bucket.entryCount += 1;
-      await bucket.save();
-    }
-
-    application.status = "disbursed";
-    application.disbursedAt = date;
-    await application.save();
-
-    return res.status(200).json({
-      message: `Loan of ₹${application.requestedAmount} successfully disbursed to customer account`,
-      application,
-      customerAccountBalance: account.balance,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Loan disbursement failed",
       error: error.message,
     });
   }

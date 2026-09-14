@@ -2,8 +2,11 @@ import express from "express";
 import {
   submitKYC,
   getKYCStatus,
-  getPendingKYCs,
-  reviewKYC,
+  getKycQueue,
+  getKycDetail,
+  startKycReview,
+  approveKyc,
+  rejectKyc,
 } from "../controllers/kycController.js";
 import { protect, authorize } from "../middleware/authMiddleware.js";
 
@@ -13,8 +16,11 @@ const router = express.Router();
 router.post("/submit", protect, authorize("customer"), submitKYC);
 router.get("/status", protect, authorize("customer"), getKYCStatus);
 
-// Worker / Admin KYC review routes
-router.get("/pending", protect, authorize("worker", "admin"), getPendingKYCs);
-router.put("/review/:id", protect, authorize("worker", "admin"), reviewKYC);
+// Worker / Admin KYC review queue routes
+router.get("/queue", protect, authorize("worker", "admin"), getKycQueue);
+router.get("/:id", protect, authorize("worker", "admin"), getKycDetail);
+router.put("/:id/start-review", protect, authorize("worker", "admin"), startKycReview);
+router.put("/:id/approve", protect, authorize("worker", "admin"), approveKyc);
+router.put("/:id/reject", protect, authorize("worker", "admin"), rejectKyc);
 
 export default router;

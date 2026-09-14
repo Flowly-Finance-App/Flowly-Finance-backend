@@ -1,54 +1,28 @@
 import Account from "../models/Account.js";
 import FixedDeposit from "../models/FixedDeposit.js";
-import TransactionBucket from "../models/Transaction.js";
-
+import TransactionBucket from "../models/TransactionBucket.js";
 
 const recordTransaction = async ({
-  account,
-  user,
+  accountId,
+  userId,
   type,
-  category,
   amount,
-  balanceAfter,
   description,
-  relatedFixedDeposit,
+  refType,
+  refId,
+  meta = {},
 }) => {
-  const date = new Date();
-  const periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-
-  let bucket = await TransactionBucket.findOne({
-    account: account._id,
-    periodKey,
-  });
-
-  const entry = {
+  return TransactionBucket.postEntry({
+    accountId,
+    userId,
     type,
-    category,
     amount,
-    balanceAfter,
     description,
-    referenceNumber: `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`,
-    relatedFixedDeposit,
-    createdAt: date,
-  };
-
-  if (!bucket) {
-    bucket = await TransactionBucket.create({
-      account: account._id,
-      user,
-      periodKey,
-      entryCount: 1,
-      entries: [entry],
-    });
-  } else {
-    bucket.entries.push(entry);
-    bucket.entryCount += 1;
-    await bucket.save();
-  }
-
-  return entry;
+    refType,
+    refId,
+    meta,
+  });
 };
-
 
 export const depositFunds = async (req, res) => {
   try {
@@ -73,13 +47,12 @@ export const depositFunds = async (req, res) => {
     await account.save();
 
     const txn = await recordTransaction({
-      account,
-      user: req.user._id,
-      type: "credit",
-      category: "deposit",
+      accountId: account._id,
+      userId: req.user._id,
+      type: "deposit",
       amount: depositAmount,
-      balanceAfter: account.balance,
       description,
+      meta: { category: "deposit", balanceAfter: account.balance },
     });
 
     return res.status(200).json({
@@ -151,14 +124,14 @@ export const createFixedDeposit = async (req, res) => {
     });
 
     const txn = await recordTransaction({
-      account,
-      user: req.user._id,
+      accountId: account._id,
+      userId: req.user._id,
       type: "debit",
-      category: "fd_deposit",
       amount: principal,
-      balanceAfter: account.balance,
       description: `Fixed Deposit creation (${months} months @ ${rate}%)`,
-      relatedFixedDeposit: fixedDeposit._id,
+      refType: "FixedDeposit",
+      refId: fixedDeposit._id,
+      meta: { category: "fd_deposit", balanceAfter: account.balance },
     });
 
     return res.status(201).json({

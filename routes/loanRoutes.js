@@ -6,8 +6,8 @@ import {
   getUserApplications,
   getAllApplications,
   reviewLoanApplication,
-  disburseLoan,
 } from "../controllers/loanController.js";
+import { disburseLoan } from "../controllers/repaymentController.js";
 import { protect, authorize } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
