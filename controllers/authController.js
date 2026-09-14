@@ -39,7 +39,9 @@ export const generateAccountNumber = async () => {
 };
 
 /**
- * Creates and activates a bank account for a user once KYC is approved
+ * Creates and activates a bank account for a user once KYC is approved.
+ * Retries on accountNumber collisions (duplicate key errors) and is safe
+ * to call multiple times for the same user (idempotent).
  */
 export const createBankAccountForUser = async (userId, options = {}) => {
   let existingAccount = await Account.findOne({ user: userId });
@@ -51,18 +53,50 @@ export const createBankAccountForUser = async (userId, options = {}) => {
     return existingAccount;
   }
 
-  const accountNumber = await generateAccountNumber();
-  const account = await Account.create({
-    user: userId,
-    accountNumber,
-    accountType: options.accountType || "savings",
-    balance: options.balance || 0,
-    branch: options.branch || "Kochi Main Branch",
-    ifscCode: options.ifscCode || "FLOW0001001",
-    status: "active",
-  });
+  const MAX_ATTEMPTS = 5;
+  let lastError;
 
-  return account;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const accountNumber = await generateAccountNumber();
+      const account = await Account.create({
+        user: userId,
+        accountNumber,
+        accountType: options.accountType || "savings",
+        balance: options.balance || 0,
+        branch: options.branch || "Kochi Main Branch",
+        ifscCode: options.ifscCode || "FLOW0001001",
+        status: "active",
+      });
+
+      return account;
+    } catch (error) {
+      lastError = error;
+
+      // 11000 = duplicate key error. This happens when two account
+      // creations race and compute the same "next" accountNumber.
+      // Retry with a freshly recomputed number instead of failing outright.
+      if (error.code === 11000) {
+        // Another request may have created this user's account in the
+        // meantime (e.g. two KYC reviews fired concurrently) - reuse it.
+        const raceAccount = await Account.findOne({ user: userId });
+        if (raceAccount) {
+          if (raceAccount.status !== "active") {
+            raceAccount.status = "active";
+            await raceAccount.save();
+          }
+          return raceAccount;
+        }
+        continue; // retry with a new accountNumber
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(
+    `Failed to generate a unique account number after ${MAX_ATTEMPTS} attempts: ${lastError?.message}`,
+  );
 };
 
 

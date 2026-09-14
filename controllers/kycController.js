@@ -1,9 +1,9 @@
 import KYC from "../models/KYC.js";
 import User from "../models/User.js";
 import Document from "../models/Document.js";
+import Account from "../models/Account.js";
 import { createBankAccountForUser } from "./authController.js";
-
-
+import { sendNotification } from "./notificationController.js";
 
 export const submitKYC = async (req, res) => {
   try {
@@ -15,7 +15,6 @@ export const submitKYC = async (req, res) => {
       });
     }
 
-    
     let documentRecord = null;
     if (documentUrl) {
       documentRecord = await Document.create({
@@ -26,7 +25,6 @@ export const submitKYC = async (req, res) => {
       });
     }
 
-    // Check if user already submitted KYC
     let kycRecord = await KYC.findOne({ user: req.user._id });
 
     if (kycRecord) {
@@ -54,7 +52,6 @@ export const submitKYC = async (req, res) => {
       });
     }
 
-    // Update user status
     await User.findByIdAndUpdate(req.user._id, {
       kycStatus: "under_verification",
       address,
@@ -72,14 +69,20 @@ export const submitKYC = async (req, res) => {
   }
 };
 
-
 export const getKYCStatus = async (req, res) => {
   try {
-    const kyc = await KYC.findOne({ user: req.user._id }).populate("document");
+    const userId = req.user._id || req.user.id;
+    const kyc = await KYC.findOne({ user: userId }).populate("document");
+
+    let account = await Account.findOne({ user: userId });
+    if (!account && req.user.kycStatus === "verified") {
+      account = await createBankAccountForUser(userId);
+    }
 
     return res.status(200).json({
       kycStatus: req.user.kycStatus,
       kycDetails: kyc || null,
+      account: account || null,
     });
   } catch (error) {
     return res.status(500).json({
@@ -89,94 +92,196 @@ export const getKYCStatus = async (req, res) => {
   }
 };
 
-
-export const getPendingKYCs = async (req, res) => {
+export const getKycQueue = async (req, res) => {
   try {
-    const pendingKYCs = await KYC.find({
-      verificationStatus: { $in: ["pending", "under_verification"] },
-    }).populate("user", "name email phone kycStatus createdAt").populate("document");
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+    const filter = {};
+    if (req.query.status) {
+      filter.verificationStatus = req.query.status;
+    } else {
+      filter.verificationStatus = { $in: ["pending", "under_verification"] };
+    }
+
+    const [records, total] = await Promise.all([
+      KYC.find(filter)
+        .populate("user", "name email phone kycStatus")
+        .populate("document", "documentType fileUrl uploadedAt verificationStatus")
+        .populate("verifiedBy", "name")
+        .sort({ createdAt: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      KYC.countDocuments(filter),
+    ]);
 
     return res.status(200).json({
-      count: pendingKYCs.length,
-      kycs: pendingKYCs,
+      success: true,
+      data: records,
+      total,
+      page,
+      limit,
     });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Failed to fetch pending KYCs",
-      error: error.message,
-    });
+  } catch (err) {
+    console.error("getKycQueue error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch KYC queue" });
   }
 };
 
-
-export const reviewKYC = async (req, res) => {
+export const getKycDetail = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status, rejectionReason } = req.body; // status: "verified" | "rejected"
+    const record = await KYC.findById(req.params.id)
+      .populate("user", "name email phone address kycStatus")
+      .populate("document")
+      .populate("verifiedBy", "name");
 
-    if (!["verified", "rejected"].includes(status)) {
-      return res.status(400).json({
-        message: "Invalid status. Must be 'verified' or 'rejected'.",
-      });
+    if (!record) {
+      return res.status(404).json({ success: false, message: "KYC record not found" });
     }
 
-    if (status === "rejected" && !rejectionReason) {
-      return res.status(400).json({
-        message: "Please provide a rejection reason when rejecting KYC.",
-      });
-    }
-
-    const kyc = await KYC.findById(id);
-
-    if (!kyc) {
-      return res.status(404).json({
-        message: "KYC record not found",
-      });
-    }
-
-    kyc.verificationStatus = status;
-    kyc.verifiedBy = req.user._id;
-    kyc.verifiedAt = new Date();
-    if (status === "rejected") {
-      kyc.rejectionReason = rejectionReason;
-    }
-    await kyc.save();
-
-    // Update user kycStatus
-    await User.findByIdAndUpdate(kyc.user, {
-      kycStatus: status,
-    });
-
-    if (kyc.document) {
-      await Document.findByIdAndUpdate(kyc.document, {
-        verificationStatus: status,
-      });
-    }
-
-    let account = null;
-    if (status === "verified") {
-      account = await createBankAccountForUser(kyc.user);
-    }
+    const otherSubmissions = await KYC.find({
+      user: record.user._id,
+      _id: { $ne: record._id },
+    })
+      .populate("document", "documentType verificationStatus")
+      .sort({ createdAt: -1 });
 
     return res.status(200).json({
-      message: `KYC has been ${status} successfully.${status === "verified" ? " Bank account generated and activated." : ""}`,
-      kyc,
-      account: account
-        ? {
-            id: account._id,
-            accountNumber: account.accountNumber,
-            accountType: account.accountType,
-            balance: account.balance,
-            branch: account.branch,
-            ifscCode: account.ifscCode,
-            status: account.status,
-          }
-        : null,
+      success: true,
+      data: { record, otherSubmissions },
     });
-  } catch (error) {
-    return res.status(500).json({
-      message: "Failed to review KYC",
-      error: error.message,
+  } catch (err) {
+    console.error("getKycDetail error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch KYC record" });
+  }
+};
+
+export const startKycReview = async (req, res) => {
+  try {
+    const record = await KYC.findById(req.params.id);
+
+    if (!record) {
+      return res.status(404).json({ success: false, message: "KYC record not found" });
+    }
+
+    if (record.verificationStatus === "verified" || record.verificationStatus === "rejected") {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot start review — record is already "${record.verificationStatus}"`,
+      });
+    }
+
+    record.verificationStatus = "under_verification";
+    record.verifiedBy = req.user._id || req.user.id;
+    await record.save();
+
+    await User.findByIdAndUpdate(record.user, { kycStatus: "under_verification" });
+
+    return res.status(200).json({ success: true, data: record });
+  } catch (err) {
+    console.error("startKycReview error:", err);
+    return res.status(500).json({ success: false, message: "Failed to start review" });
+  }
+};
+
+export const approveKyc = async (req, res) => {
+  try {
+    const record = await KYC.findById(req.params.id);
+
+    if (!record) {
+      return res.status(404).json({ success: false, message: "KYC record not found" });
+    }
+
+    if (record.verificationStatus === "verified") {
+      return res.status(409).json({ success: false, message: "Record is already verified" });
+    }
+
+    record.verificationStatus = "verified";
+    record.verifiedAt = new Date();
+    record.verifiedBy = req.user._id || req.user.id;
+    record.rejectionReason = undefined;
+    record.resubmissionRequested = false;
+    await record.save();
+
+    if (record.document) {
+      await Document.findByIdAndUpdate(record.document, { verificationStatus: "verified" });
+    }
+
+    await User.findByIdAndUpdate(record.user, { kycStatus: "verified" });
+
+    let account = null;
+    let accountCreationError = null;
+    try {
+      account = await createBankAccountForUser(record.user);
+    } catch (error) {
+      accountCreationError = error.message;
+      console.error(`Bank account creation failed for user ${record.user}:`, error);
+    }
+
+    await sendNotification({
+      userId: record.user,
+      type: "kyc",
+      title: "KYC Approved",
+      message: "Your KYC document has been verified and your bank account is active.",
+    }).catch((err) => console.error("Notification failed:", err));
+
+    return res.status(200).json({
+      success: true,
+      message: accountCreationError
+        ? `KYC approved, but account creation failed: ${accountCreationError}`
+        : "KYC approved successfully and bank account activated.",
+      data: record,
+      account,
     });
+  } catch (err) {
+    console.error("approveKyc error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Failed to approve KYC" });
+  }
+};
+
+export const rejectKyc = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const requestResubmission = req.body.requestResubmission !== false;
+
+    if (!reason || !reason.trim()) {
+      return res.status(422).json({
+        success: false,
+        message: "A rejection reason is required",
+      });
+    }
+
+    const record = await KYC.findById(req.params.id);
+
+    if (!record) {
+      return res.status(404).json({ success: false, message: "KYC record not found" });
+    }
+
+    record.verificationStatus = "rejected";
+    record.verifiedAt = new Date();
+    record.verifiedBy = req.user._id || req.user.id;
+    record.rejectionReason = reason.trim();
+    record.resubmissionRequested = requestResubmission;
+    await record.save();
+
+    if (record.document) {
+      await Document.findByIdAndUpdate(record.document, { verificationStatus: "rejected" });
+    }
+
+    await User.findByIdAndUpdate(record.user, { kycStatus: "rejected" });
+
+    await sendNotification({
+      userId: record.user,
+      type: "kyc",
+      title: "KYC Document Rejected",
+      message: requestResubmission
+        ? `Your document was rejected: ${reason.trim()}. Please re-upload a valid document.`
+        : `Your document was rejected: ${reason.trim()}.`,
+    }).catch((err) => console.error("Notification failed:", err));
+
+    return res.status(200).json({ success: true, data: record });
+  } catch (err) {
+    console.error("rejectKyc error:", err);
+    return res.status(500).json({ success: false, message: err.message || "Failed to reject KYC" });
   }
 };

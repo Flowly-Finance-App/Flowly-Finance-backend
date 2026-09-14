@@ -1,7 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
-
 export const protect = async (req, res, next) => {
   try {
     let token;
@@ -59,8 +58,9 @@ export const protect = async (req, res, next) => {
  * Authorize specified user roles (e.g. authorize("worker", "admin"))
  */
 export const authorize = (...roles) => {
+  const roleArray = Array.isArray(roles[0]) ? roles[0] : roles;
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || !roleArray.includes(req.user.role)) {
       return res.status(403).json({
         message: `Role (${req.user?.role || "guest"}) is not authorized to access this resource.`,
       });
@@ -68,3 +68,6 @@ export const authorize = (...roles) => {
     next();
   };
 };
+
+export const requireAuth = protect;
+export const requireRole = (roles) => authorize(roles);
