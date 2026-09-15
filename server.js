@@ -9,6 +9,7 @@ import calculatorRoutes from "./routes/calculatorRoutes.js";
 import depositRoutes from "./routes/depositRoutes.js";
 import loanRoutes from "./routes/loanRoutes.js";
 import customerDashboardRoutes from "./routes/customerDashboardRoutes.js";
+import customerRoutes from "./routes/customerRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import repaymentRoutes from "./routes/repaymentRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
@@ -52,6 +53,7 @@ app.use("/api/calculator", calculatorRoutes);
 app.use("/api/deposits", depositRoutes);
 app.use("/api/loans", loanRoutes);
 app.use("/api/customer/dashboard", customerDashboardRoutes);
+app.use("/api/customers", customerRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/repayments", repaymentRoutes);
 
