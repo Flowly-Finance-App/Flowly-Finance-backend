@@ -17,6 +17,25 @@ const fixedDepositSchema = new Schema(
     maturityAmount: { type: Number, required: true },
     status: { type: String, enum: ["active", "matured", "closed_early", "cancelled"], default: "active", index: true },
     certificateUrl: String,
+
+    // Renewal chain — set when this FD was opened by auto/manual renewal of a matured FD,
+    // and on the parent once it spawns a renewal.
+    autoRenew: { type: Boolean, default: false },
+    renewedFrom: { type: Schema.Types.ObjectId, ref: "FixedDeposit" },
+    renewedTo: { type: Schema.Types.ObjectId, ref: "FixedDeposit" },
+
+    // Set once the maturity job actually pays this FD out, so re-runs are idempotent.
+    maturityProcessedAt: { type: Date },
+
+    // Present only when status === "closed_early".
+    earlyClosure: {
+      closedAt: Date,
+      elapsedMonths: Number,
+      penaltyRate: Number, // percentage points shaved off the contracted rate
+      effectiveRate: Number,
+      interestPaid: Number,
+      payoutAmount: Number,
+    },
   },
   { timestamps: true }
 );

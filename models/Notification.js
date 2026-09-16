@@ -20,7 +20,7 @@ const notificationSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["loan", "kyc", "emi", "payment", "system"],
+      enum: ["loan", "kyc", "emi", "payment", "deposit", "system"],
       default: "system",
     },
 
