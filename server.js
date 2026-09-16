@@ -1,7 +1,12 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import connectDB from "./config/db.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import authRoutes from "./routes/authRoutes.js";
 import kycRoutes from "./routes/kycRoutes.js";
@@ -27,6 +32,9 @@ app.use(cors());
 app.use("/api/webhooks", webhookRoutes);
 
 app.use(express.json());
+
+// Serve uploaded KYC documents (images/PDFs) as static files
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Health Check
 app.get("/", (req, res) => {

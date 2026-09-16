@@ -7,12 +7,20 @@ import { sendNotification } from "./notificationController.js";
 
 export const submitKYC = async (req, res) => {
   try {
-    const { dob, gender, address, idType, idNumber, documentUrl } = req.body;
+    const { dob, gender, address, idType, idNumber } = req.body;
 
     if (!address || !idType || !idNumber) {
       return res.status(400).json({
         message: "Please provide address, idType, and idNumber",
       });
+    }
+
+    // Prefer an uploaded file (multipart/form-data, field name "document").
+    // Fall back to a raw documentUrl string in the body for clients that
+    // host the file elsewhere (e.g. Cloudinary/Firebase) and just pass a link.
+    let documentUrl = req.body.documentUrl;
+    if (req.file) {
+      documentUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
     }
 
     let documentRecord = null;

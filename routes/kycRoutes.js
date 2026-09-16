@@ -9,11 +9,18 @@ import {
   rejectKyc,
 } from "../controllers/kycController.js";
 import { protect, authorize } from "../middleware/authMiddleware.js";
+import { uploadKycDocument } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
 // Customer KYC routes
-router.post("/submit", protect, authorize("customer"), submitKYC);
+router.post(
+  "/submit",
+  protect,
+  authorize("customer"),
+  uploadKycDocument.single("document"),
+  submitKYC
+);
 router.get("/status", protect, authorize("customer"), getKYCStatus);
 
 // Worker / Admin KYC review queue routes
