@@ -204,6 +204,22 @@ export const approveKyc = async (req, res) => {
       return res.status(409).json({ success: false, message: "Record is already verified" });
     }
 
+    // Create the bank account FIRST. Only once this succeeds do we flip the
+    // KYC record and the user's kycStatus to "verified" — this guarantees
+    // "verified" and "has an account" can never drift apart. If account
+    // creation fails, we fail the whole approval (nothing is marked
+    // verified) so the worker sees a clear error and can just retry.
+    let account;
+    try {
+      account = await createBankAccountForUser(record.user);
+    } catch (error) {
+      console.error(`Bank account creation failed for user ${record.user}:`, error);
+      return res.status(502).json({
+        success: false,
+        message: `Could not approve KYC: bank account creation failed (${error.message}). Nothing was changed — please retry.`,
+      });
+    }
+
     record.verificationStatus = "verified";
     record.verifiedAt = new Date();
     record.verifiedBy = req.user._id || req.user.id;
@@ -217,15 +233,6 @@ export const approveKyc = async (req, res) => {
 
     await User.findByIdAndUpdate(record.user, { kycStatus: "verified" });
 
-    let account = null;
-    let accountCreationError = null;
-    try {
-      account = await createBankAccountForUser(record.user);
-    } catch (error) {
-      accountCreationError = error.message;
-      console.error(`Bank account creation failed for user ${record.user}:`, error);
-    }
-
     await sendNotification({
       userId: record.user,
       type: "kyc",
@@ -235,9 +242,7 @@ export const approveKyc = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: accountCreationError
-        ? `KYC approved, but account creation failed: ${accountCreationError}`
-        : "KYC approved successfully and bank account activated.",
+      message: "KYC approved successfully and bank account activated.",
       data: record,
       account,
     });
