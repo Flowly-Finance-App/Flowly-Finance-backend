@@ -26,16 +26,18 @@ const START_SEQUENCE = 10001;
 const BASE_ACCOUNT_NUMBER = Number(`${BANK_PREFIX}${START_SEQUENCE}`);
 
 export const generateAccountNumber = async () => {
-  // Find highest existing account number in bank sequence range
-  const lastAccount = await Account.findOne({
-    accountNumber: { $gte: BASE_ACCOUNT_NUMBER },
-  }).sort({ accountNumber: -1 });
+  // Fetch existing account numbers to find the highest numerical sequence
+  const accounts = await Account.find({}, { accountNumber: 1 }).lean();
+  let maxAccountNum = BASE_ACCOUNT_NUMBER - 1;
 
-  if (!lastAccount || typeof lastAccount.accountNumber !== "number") {
-    return BASE_ACCOUNT_NUMBER;
+  for (const acc of accounts) {
+    const num = Number(acc.accountNumber);
+    if (!isNaN(num) && num > maxAccountNum) {
+      maxAccountNum = num;
+    }
   }
 
-  return lastAccount.accountNumber + 1;
+  return maxAccountNum + 1;
 };
 
 /**
