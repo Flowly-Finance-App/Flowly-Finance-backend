@@ -36,6 +36,17 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
+    mpinHistory: {
+      type: [String],
+      default: [],
+      select: false,
+    },
+
+    isMpinSet: {
+      type: Boolean,
+      default: false,
+    },
+
     googleId: {
       type: String,
       unique: true,

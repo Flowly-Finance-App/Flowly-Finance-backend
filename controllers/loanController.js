@@ -90,9 +90,9 @@ export const seedLoanProducts = async (req, res) => {
 
 export const applyLoan = async (req, res) => {
   try {
-    const { productId, productName, requestedAmount, tenureMonths, purpose } = req.body;
-    const amount = Number(requestedAmount);
-    const months = Number(tenureMonths);
+    const { productId, productName, requestedAmount, amount: bodyAmount, tenureMonths, tenure: bodyTenure, purpose } = req.body;
+    const amount = Number(requestedAmount || bodyAmount);
+    const months = Number(tenureMonths || bodyTenure);
 
     if (!amount || amount <= 0 || !months || months <= 0) {
       return res.status(400).json({
