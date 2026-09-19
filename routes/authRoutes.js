@@ -3,6 +3,7 @@ import {
   sendOTP,
   verifyOTP,
   registerUser,
+  generateMPIN,
   loginUser,
   resetMPIN,
   googleAuth,
@@ -20,6 +21,7 @@ router.post("/otp/verify", verifyOTP);
 
 // Customer Auth (MPIN & Google OAuth)
 router.post("/user/register", registerUser);
+router.post("/mpin/generate", generateMPIN);
 router.post("/user/login", loginUser);
 router.post("/mpin/reset", resetMPIN);
 router.post("/google", googleAuth);

@@ -4,7 +4,7 @@ import OTP from "../models/OTP.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
-import { sendOTPEmail } from "../utils/mailer.js";
+import { sendOTPEmail, sendAccountLockoutEmail } from "../utils/mailer.js";
 
 const generateToken = (user) => {
   const secret = process.env.JWT_SECRET || "flowly_secret_key_12345";
@@ -204,24 +204,16 @@ export const verifyOTP = async (req, res) => {
 };
 
 /**
- * Customer Registration with MPIN setup & OTP verification
+ * Customer Registration (MPIN setup is done separately after registration)
  */
 export const registerUser = async (req, res) => {
   try {
-    const { fullName, name, email, phone, mpin, password, otp } = req.body;
+    const { fullName, name, email, phone, password, otp } = req.body;
     const userName = name || fullName;
-    const userMpin = mpin || password; // Fallback support if client sends password field as MPIN
 
-    if (!userName || !email || !phone || !userMpin) {
+    if (!userName || !email || !phone || !otp) {
       return res.status(400).json({
-        message: "Please provide name, email, phone, and MPIN (4-6 digits)",
-      });
-    }
-
-    const cleanMpin = String(userMpin).trim();
-    if (!/^\d{4,6}$/.test(cleanMpin)) {
-      return res.status(400).json({
-        message: "MPIN must be a 4 to 6 digit numerical PIN",
+        message: "Please provide name, email, phone, and 6-digit email OTP code",
       });
     }
 
@@ -238,30 +230,30 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Verify OTP if provided or required
-    if (otp) {
-      const otpRecord = await OTP.findOne({
-        email: cleanEmail,
-        otp: otp.trim(),
-        purpose: "registration",
-      });
+    // Verify mandatory OTP for registration
+    const otpRecord = await OTP.findOne({
+      email: cleanEmail,
+      otp: String(otp).trim(),
+      purpose: "registration",
+    });
 
-      if (!otpRecord) {
-        return res.status(400).json({
-          message: "Invalid OTP code provided for registration",
-        });
-      }
+    if (!otpRecord) {
+      return res.status(400).json({
+        message: "Invalid or expired OTP code provided for registration",
+      });
     }
 
-    // Hash MPIN securely
-    const hashedMpin = await bcrypt.hash(cleanMpin, 10);
+    let hashedPassword = null;
+    if (password) {
+      hashedPassword = await bcrypt.hash(String(password).trim(), 10);
+    }
 
     const user = await User.create({
       name: userName,
       email: cleanEmail,
       phone,
-      mpinHash: hashedMpin,
-      password: hashedMpin, // Save in password field too for compatibility
+      password: hashedPassword,
+      isMpinSet: false,
       role: "customer",
       kycStatus: "pending",
       isEmailVerified: true,
@@ -273,7 +265,7 @@ export const registerUser = async (req, res) => {
     const token = generateToken(user);
 
     return res.status(201).json({
-      message: "User registered successfully. Please complete KYC verification to activate your bank account.",
+      message: "User registered successfully. Please generate your MPIN to enable login and complete KYC verification.",
       token,
       user: {
         id: user._id,
@@ -283,12 +275,117 @@ export const registerUser = async (req, res) => {
         role: user.role,
         kycStatus: user.kycStatus,
         isEmailVerified: user.isEmailVerified,
+        isMpinSet: user.isMpinSet,
       },
       account: null,
     });
   } catch (error) {
     return res.status(500).json({
       message: "Registration failed",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Generate / Set up MPIN via 2-step OTP verification
+ */
+export const generateMPIN = async (req, res) => {
+  try {
+    const { email, phone, otp, mpin } = req.body;
+
+    if ((!email && !phone) || !otp || !mpin) {
+      return res.status(400).json({
+        message: "Email/Phone, OTP code, and MPIN are required",
+      });
+    }
+
+    const cleanMpin = String(mpin).trim();
+    if (!/^\d{4,6}$/.test(cleanMpin)) {
+      return res.status(400).json({
+        message: "MPIN must be a 4 to 6 digit numerical PIN",
+      });
+    }
+
+    const query = email ? { email: email.toLowerCase().trim() } : { phone };
+    const user = await User.findOne(query).select("+mpinHash +mpinHistory");
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User account not found",
+      });
+    }
+
+    const cleanEmail = user.email.toLowerCase().trim();
+
+    // Verify OTP for purpose "generate_mpin"
+    const otpRecord = await OTP.findOne({
+      email: cleanEmail,
+      otp: String(otp).trim(),
+      purpose: "generate_mpin",
+    });
+
+    if (!otpRecord) {
+      return res.status(400).json({
+        message: "Invalid or expired OTP code for MPIN generation",
+      });
+    }
+
+    // Check against previous MPIN history to prevent reuse
+    const previousHashes = [
+      ...(user.mpinHistory || []),
+      ...(user.mpinHash ? [user.mpinHash] : []),
+    ];
+
+    for (const hash of previousHashes) {
+      if (hash) {
+        const isPrevious = await bcrypt.compare(cleanMpin, hash);
+        if (isPrevious) {
+          return res.status(400).json({
+            message: "You cannot reuse a previously used MPIN. Please enter a new MPIN.",
+          });
+        }
+      }
+    }
+
+    // Hash MPIN securely
+    const hashedMpin = await bcrypt.hash(cleanMpin, 10);
+    if (!user.mpinHistory) {
+      user.mpinHistory = [];
+    }
+    if (user.mpinHash && !user.mpinHistory.includes(user.mpinHash)) {
+      user.mpinHistory.push(user.mpinHash);
+    }
+
+    user.mpinHash = hashedMpin;
+    user.password = hashedMpin; // Save in password field for compatibility
+    user.isMpinSet = true;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+    await user.save();
+
+    // Clean up OTP record
+    await OTP.deleteMany({ email: cleanEmail, purpose: "generate_mpin" });
+
+    const token = generateToken(user);
+
+    return res.status(200).json({
+      message: "MPIN generated successfully. You can now login using your MPIN.",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        kycStatus: user.kycStatus,
+        isEmailVerified: user.isEmailVerified,
+        isMpinSet: user.isMpinSet,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "MPIN generation failed",
       error: error.message,
     });
   }
@@ -309,11 +406,19 @@ export const loginUser = async (req, res) => {
     }
 
     const query = email ? { email: email.toLowerCase().trim() } : { phone };
-    const user = await User.findOne(query).select("+mpinHash +password +failedLoginAttempts +lockUntil");
+    const user = await User.findOne(query).select("+mpinHash +password +failedLoginAttempts +lockUntil +isMpinSet");
 
     if (!user || user.role !== "customer") {
       return res.status(401).json({
         message: "Invalid credentials or account does not exist",
+      });
+    }
+
+    // Check if MPIN has been generated yet
+    if (!user.isMpinSet || !user.mpinHash) {
+      return res.status(400).json({
+        message: "MPIN has not been generated for this account. Please generate your MPIN first using 2-step verification.",
+        requiresMpinSetup: true,
       });
     }
 
@@ -334,15 +439,7 @@ export const loginUser = async (req, res) => {
       user.lockUntil = null;
     }
 
-    // Check MPIN first, fallback to password hash
-    const storedHash = user.mpinHash || user.password;
-    if (!storedHash) {
-      return res.status(401).json({
-        message: "Account authentication credentials not set",
-      });
-    }
-
-    const isMatch = await bcrypt.compare(String(loginSecret).trim(), storedHash);
+    const isMatch = await bcrypt.compare(String(loginSecret).trim(), user.mpinHash);
 
     if (!isMatch) {
       user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
@@ -351,8 +448,13 @@ export const loginUser = async (req, res) => {
         user.lockUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // Suspend for 24 hours
         await user.save();
 
+        // Send security alert email
+        sendAccountLockoutEmail(user.email, user.name).catch((err) =>
+          console.error("Failed to send lockout alert email:", err)
+        );
+
         return res.status(403).json({
-          message: "Account suspended for 24 hours due to 4 incorrect login attempts.",
+          message: "Account suspended for 24 hours due to 4 incorrect login attempts. An alert email has been sent to your registered email.",
           isLocked: true,
           lockUntil: user.lockUntil,
         });
@@ -362,7 +464,7 @@ export const loginUser = async (req, res) => {
       const attemptsLeft = 4 - user.failedLoginAttempts;
 
       return res.status(401).json({
-        message: `Invalid MPIN or credentials. ${attemptsLeft} attempt(s) remaining before 24-hour account suspension.`,
+        message: `Invalid MPIN. ${attemptsLeft} attempt(s) remaining before 24-hour account suspension.`,
         failedAttempts: user.failedLoginAttempts,
         attemptsLeft,
       });
@@ -391,6 +493,7 @@ export const loginUser = async (req, res) => {
         phone: user.phone,
         role: user.role,
         kycStatus: user.kycStatus,
+        isMpinSet: user.isMpinSet,
       },
       account: account
         ? {
@@ -445,16 +548,43 @@ export const resetMPIN = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email: cleanEmail });
+    const user = await User.findOne({ email: cleanEmail }).select("+mpinHash +mpinHistory");
     if (!user) {
       return res.status(404).json({
         message: "User account not found",
       });
     }
 
+    // Check against previous MPIN history to prevent reuse
+    const previousHashes = [
+      ...(user.mpinHistory || []),
+      ...(user.mpinHash ? [user.mpinHash] : []),
+    ];
+
+    for (const hash of previousHashes) {
+      if (hash) {
+        const isPrevious = await bcrypt.compare(cleanMpin, hash);
+        if (isPrevious) {
+          return res.status(400).json({
+            message: "You cannot reuse a previously used MPIN. Please enter a new MPIN.",
+          });
+        }
+      }
+    }
+
     const hashedMpin = await bcrypt.hash(cleanMpin, 10);
+    if (!user.mpinHistory) {
+      user.mpinHistory = [];
+    }
+    if (user.mpinHash && !user.mpinHistory.includes(user.mpinHash)) {
+      user.mpinHistory.push(user.mpinHash);
+    }
+
     user.mpinHash = hashedMpin;
     user.password = hashedMpin;
+    user.isMpinSet = true;
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
     await user.save();
 
     // Delete used OTP
@@ -558,6 +688,7 @@ export const googleAuth = async (req, res) => {
         role: user.role,
         kycStatus: user.kycStatus,
         isEmailVerified: user.isEmailVerified,
+        isMpinSet: user.isMpinSet || false,
       },
       account: account
         ? {
@@ -681,8 +812,13 @@ export const loginWorker = async (req, res) => {
         worker.lockUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // Suspend for 24 hours
         await worker.save();
 
+        // Send security alert email
+        sendAccountLockoutEmail(worker.email, worker.name).catch((err) =>
+          console.error("Failed to send worker lockout alert email:", err)
+        );
+
         return res.status(403).json({
-          message: "Worker account suspended for 24 hours due to 4 incorrect login attempts.",
+          message: "Worker account suspended for 24 hours due to 4 incorrect login attempts. An alert email has been sent.",
           isLocked: true,
           lockUntil: worker.lockUntil,
         });
