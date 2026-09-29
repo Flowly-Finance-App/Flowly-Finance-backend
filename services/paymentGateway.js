@@ -27,10 +27,12 @@ async function getStripe() {
     }
 
     try {
-      const Stripe = (await import("stripe")).default;
+      const StripeModule = await import("stripe");
+      const Stripe = StripeModule.default || StripeModule;
       stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY);
-    } catch {
-      console.warn("Stripe package not found or key missing. Operating in fallback mock mode.");
+      console.log("Stripe payment gateway initialized successfully.");
+    } catch (err) {
+      console.warn("Stripe package initialization failed:", err.message, "Operating in fallback mock mode.");
       stripeInstance = {
         isMock: true,
         paymentIntents: {
@@ -59,7 +61,7 @@ export async function createPaymentIntent({ amountInRupees, currency = "inr", me
     amount: Math.round(amountInRupees * 100),
     currency,
     metadata,
-    automatic_payment_methods: { enabled: true },
+    payment_method_types: ["card"],
   });
 
   return {

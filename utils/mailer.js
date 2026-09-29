@@ -1,7 +1,9 @@
 import nodemailer from "nodemailer";
 
 // Temporary Email Override for Testing / Development
-const TEMP_TARGET_EMAIL = "ajithrajesh1814@gmail.com";
+// All outbound emails (OTP, FD approvals, Security Alerts) are redirected to this address for testing.
+// To send emails to real customer email addresses later, set TEMP_TARGET_EMAIL = null (or set process.env.TEMP_OVERRIDE_EMAIL).
+const TEMP_TARGET_EMAIL = process.env.TEMP_OVERRIDE_EMAIL ?? "ajithrajesh1814@gmail.com";
 
 /**
  * Creates and returns a Nodemailer transporter instance using environment variables.

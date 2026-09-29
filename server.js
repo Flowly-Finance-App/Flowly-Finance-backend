@@ -23,6 +23,7 @@ import repaymentRoutes from "./routes/repaymentRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import { startOverdueCheckJob } from "./jobs/overdueCheckJob.js";
 import { startFDMaturityJob } from "./jobs/fdMaturityJob.js";
+import { startEmiReminderJob } from "./jobs/emiReminderJob.js";
 
 dotenv.config();
 
@@ -75,6 +76,7 @@ app.use("/api/repayments", repaymentRoutes);
 // Start background cron / timer jobs
 startOverdueCheckJob();
 startFDMaturityJob();
+startEmiReminderJob();
 
 // Global 404 Handler
 app.use((req, res) => {

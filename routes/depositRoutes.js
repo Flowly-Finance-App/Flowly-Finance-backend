@@ -29,25 +29,19 @@ import { uploadFDSupportingDoc } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
+// FD Scheme Catalog & Management Endpoints
+router.get("/fd/schemes", protect, listActiveSchemes);
+router.get("/fd/schemes/all", protect, authorize("worker", "admin"), listAllSchemes);
+router.get("/fd/schemes/:id", protect, getSchemeById);
+router.post("/fd/schemes", protect, authorize("worker", "admin"), createScheme);
+router.put("/fd/schemes/:id", protect, authorize("worker", "admin"), updateScheme);
+router.patch("/fd/schemes/:id/toggle", protect, authorize("worker", "admin"), toggleSchemeActive);
+
 // Customer deposit endpoints
 router.post("/account/deposit", protect, depositFunds);
 // "Add Money" step — Stripe top-up when the FD Balance Check comes up short
 router.post("/account/topup/initiate", protect, authorize("customer"), initiateAccountTopUp);
 router.post("/account/topup/confirm", protect, authorize("customer"), confirmAccountTopUp);
-
-// FD Scheme catalog — "customer gets different FD schemes" (like a real bank
-// app's FD product list) + "worker can edit FD features" (the catalog itself).
-// All registered ahead of the "/fd/:id" catch-all below, same reasoning as
-// the "/fd/queue" note further down: Express matches in declaration order,
-// so a literal path like "/fd/schemes" must come before "/fd/:id" or it
-// would be swallowed as :id = "schemes".
-router.get("/fd/schemes", protect, authorize("customer"), listActiveSchemes);
-router.get("/fd/schemes/all", protect, authorize("worker", "admin"), listAllSchemes);
-router.get("/fd/schemes/:id", protect, authorize("worker", "admin"), getSchemeById);
-router.post("/fd/schemes", protect, authorize("worker", "admin"), createScheme);
-router.put("/fd/schemes/:id", protect, authorize("worker", "admin"), updateScheme);
-router.patch("/fd/schemes/:id/toggle", protect, authorize("worker", "admin"), toggleSchemeActive);
-
 // "Enter FD Details" -> "System Calculates" preview (no money moves, nothing is created)
 router.post("/fd/calculate", protect, authorize("customer"), calculateFixedDeposit);
 router.post("/fd/create", protect, authorize("customer"), createFixedDeposit);
