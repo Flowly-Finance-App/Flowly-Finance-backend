@@ -1,171 +1,143 @@
-/**
- * seedFDSchemes.js
- *
- * Populates the FD scheme catalog so customers see a list of named Fixed
- * Deposit products to choose from (GET /api/deposits/fd/schemes), the way a
- * real digital bank app does, instead of typing in a raw tenure + type.
- * Workers/admins can go on to edit these via PUT /api/deposits/fd/schemes/:id.
- *
- * Usage:
- *   node seedFDSchemes.js          # Seed default schemes if empty
- *   node seedFDSchemes.js --force  # Overwrite/re-seed existing schemes
- *   node seedFDSchemes.js --clean  # Remove all seeded schemes
- */
-
-import "dotenv/config";
 import mongoose from "mongoose";
+import dotenv from "dotenv";
 import connectDB from "./config/db.js";
 import FDScheme from "./models/FdScheme.js";
 
-const DEFAULT_FD_SCHEMES = [
+dotenv.config();
+
+const sampleSchemes = [
   {
-    name: "Flowly Regular FD",
-    code: "REG-STD",
-    description: "Our standard Fixed Deposit for any savings goal, 3 months to 10 years.",
+    name: "Flowly High Yield Regular FD",
+    code: "FD-REG-01",
+    description: "Our flagship compound growth fixed deposit designed for high annual returns and flexible tenure options.",
     category: "regular",
-    minTenureMonths: 3,
-    maxTenureMonths: 120,
-    interestRate: 6.25, // "starting from" — actual rate resolved via rateSlabs below
-    rateSlabs: [
-      { minMonths: 3, maxMonths: 5, rate: 5.5 },
-      { minMonths: 6, maxMonths: 11, rate: 6.25 },
-      { minMonths: 12, maxMonths: 23, rate: 7.0 },
-      { minMonths: 24, maxMonths: 35, rate: 7.25 },
-      { minMonths: 36, maxMonths: 59, rate: 7.4 },
-      { minMonths: 60, maxMonths: 120, rate: 7.5 },
-    ],
-    minDeposit: 1000,
-    maxDeposit: null,
-    allowedPayoutOptions: ["cumulative", "monthly", "quarterly", "annually"],
+    minTenureMonths: 12,
+    maxTenureMonths: 60,
+    interestRate: 7.5,
+    minDeposit: 5000,
+    maxDeposit: 10000000,
+    allowedPayoutOptions: ["cumulative", "quarterly", "annually"],
     seniorCitizenOnly: false,
     seniorCitizenBonusRate: 0.5,
-    badge: "",
-    tags: [],
+    badge: "Popular",
+    tags: ["High Returns", "Flexible Tenure", "Quarterly Compounding"],
     isActive: true,
     sortOrder: 1,
-  },
-  {
-    name: "Flowly 555 Days Special",
-    code: "SPL-555",
-    description: "A limited-period special FD with a boosted rate for a fixed 555-day tenure.",
-    category: "special",
-    minTenureMonths: 18,
-    maxTenureMonths: 18, // ~555 days, modelled here in whole months
-    interestRate: 7.75,
-    rateSlabs: [],
-    minDeposit: 5000,
-    maxDeposit: 5000000,
-    allowedPayoutOptions: ["cumulative"],
-    seniorCitizenOnly: false,
-    seniorCitizenBonusRate: 0.5,
-    badge: "Highest Returns",
-    tags: ["Limited Period"],
-    isActive: true,
-    sortOrder: 2,
-  },
-  {
-    name: "Flowly Senior Citizen Special",
-    code: "SR-CITIZEN",
-    description: "Extra interest on every tenure, exclusively for customers aged 60 and above.",
-    category: "senior_citizen",
-    minTenureMonths: 6,
-    maxTenureMonths: 120,
-    interestRate: 7.75,
     rateSlabs: [
-      { minMonths: 6, maxMonths: 11, rate: 6.75 },
-      { minMonths: 12, maxMonths: 23, rate: 7.5 },
-      { minMonths: 24, maxMonths: 59, rate: 7.75 },
-      { minMonths: 60, maxMonths: 120, rate: 8.0 },
+      { minMonths: 12, maxMonths: 23, rate: 7.0 },
+      { minMonths: 24, maxMonths: 35, rate: 7.25 },
+      { minMonths: 36, maxMonths: 60, rate: 7.5 },
     ],
-    minDeposit: 1000,
-    maxDeposit: null,
+  },
+  {
+    name: "Golden Senior Citizen Growth FD",
+    code: "FD-SNR-01",
+    description: "Exclusive fixed deposit for senior citizens aged 60+ featuring an extra 0.50% interest bonus and monthly interest payout options.",
+    category: "senior_citizen",
+    minTenureMonths: 12,
+    maxTenureMonths: 120,
+    interestRate: 8.0,
+    minDeposit: 10000,
+    maxDeposit: 15000000,
     allowedPayoutOptions: ["cumulative", "monthly", "quarterly", "annually"],
     seniorCitizenOnly: true,
-    seniorCitizenBonusRate: 0, // bonus already baked into the slabs above
-    badge: "For 60+",
-    tags: ["Senior Citizen"],
+    seniorCitizenBonusRate: 0.5,
+    badge: "Senior Special",
+    tags: ["0.5% Extra Rate", "Monthly Payout Option", "High Yield"],
     isActive: true,
-    sortOrder: 3,
+    sortOrder: 2,
+    rateSlabs: [
+      { minMonths: 12, maxMonths: 24, rate: 7.5 },
+      { minMonths: 25, maxMonths: 60, rate: 7.85 },
+      { minMonths: 61, maxMonths: 120, rate: 8.0 },
+    ],
   },
   {
-    name: "Flowly Tax Saver FD",
-    code: "TAX-SAVER",
-    description: "5-year lock-in FD eligible for tax deduction under Section 80C.",
+    name: "Tax Saver 5-Year Lock-In FD",
+    code: "FD-TAX-80C",
+    description: "Save income tax under Section 80C with a mandatory 5-year lock-in period and guaranteed returns.",
     category: "tax_saver",
     minTenureMonths: 60,
     maxTenureMonths: 60,
-    interestRate: 7.1,
-    rateSlabs: [],
+    interestRate: 7.4,
     minDeposit: 1000,
     maxDeposit: 150000,
-    allowedPayoutOptions: ["cumulative"],
+    allowedPayoutOptions: ["cumulative", "annually"],
     seniorCitizenOnly: false,
     seniorCitizenBonusRate: 0.5,
-    badge: "Tax Benefit",
-    tags: ["80C"],
+    badge: "Tax Saver",
+    tags: ["Section 80C Tax Deduction", "5-Year Lock-in", "Guaranteed Yield"],
     isActive: true,
-    sortOrder: 4,
+    sortOrder: 3,
+    rateSlabs: [
+      { minMonths: 60, maxMonths: 60, rate: 7.4 },
+    ],
   },
   {
-    name: "Flowly Short-Term Flexi FD",
-    code: "FLEXI-ST",
-    description: "A short, flexible FD for parking money for a few months with monthly payouts.",
+    name: "Festive 444-Days Special FD",
+    code: "FD-SPC-444",
+    description: "Limited time special duration fixed deposit offering maximum return of 8.10% per annum for exactly 15 months (444 days).",
+    category: "special",
+    minTenureMonths: 15,
+    maxTenureMonths: 15,
+    interestRate: 8.1,
+    minDeposit: 25000,
+    maxDeposit: 5000000,
+    allowedPayoutOptions: ["cumulative", "quarterly"],
+    seniorCitizenOnly: false,
+    seniorCitizenBonusRate: 0.5,
+    badge: "Highest Rate",
+    tags: ["Super Special 444 Days", "Peak Interest Rate", "Limited Period"],
+    isActive: true,
+    sortOrder: 0,
+    rateSlabs: [
+      { minMonths: 15, maxMonths: 15, rate: 8.1 },
+    ],
+  },
+  {
+    name: "Flowly Liquid Flexi Deposit",
+    code: "FD-FLX-01",
+    description: "Short term liquid deposit with low minimum tenure starting from 3 months, ideal for short-term savings goals.",
     category: "flexi",
-    minTenureMonths: 1,
-    maxTenureMonths: 5,
-    interestRate: 5.5,
-    rateSlabs: [],
-    minDeposit: 500,
-    maxDeposit: 200000,
+    minTenureMonths: 3,
+    maxTenureMonths: 11,
+    interestRate: 6.5,
+    minDeposit: 1000,
+    maxDeposit: 2000000,
     allowedPayoutOptions: ["cumulative", "monthly"],
     seniorCitizenOnly: false,
     seniorCitizenBonusRate: 0.25,
-    badge: "Most Popular",
-    tags: ["Short Term"],
+    badge: "Short Term",
+    tags: ["Low Lock-in", "Liquid Cash", "Easy Withdrawal"],
     isActive: true,
-    sortOrder: 0,
+    sortOrder: 4,
+    rateSlabs: [
+      { minMonths: 3, maxMonths: 5, rate: 5.75 },
+      { minMonths: 6, maxMonths: 11, rate: 6.5 },
+    ],
   },
 ];
 
-const isForce = process.argv.includes("--force");
-const isClean = process.argv.includes("--clean");
+const seedFD = async () => {
+  try {
+    await connectDB();
+    console.log("Connected to MongoDB for FD Scheme Seeding...");
 
-async function seed() {
-  await connectDB();
+    for (const schemeData of sampleSchemes) {
+      await FDScheme.findOneAndUpdate(
+        { code: schemeData.code },
+        schemeData,
+        { upsert: true, new: true, runValidators: true }
+      );
+      console.log(`Seeded FD Scheme: ${schemeData.name} (${schemeData.code})`);
+    }
 
-  const existingCount = await FDScheme.countDocuments();
-  if (existingCount > 0 && !isForce) {
-    console.log(
-      `FD schemes already exist (${existingCount} found). Use --force to overwrite, or --clean to remove them.`
-    );
-    await mongoose.connection.close();
-    return;
+    console.log("FD Scheme Seeding Completed Successfully! 🚀");
+    process.exit(0);
+  } catch (error) {
+    console.error("Seeding failed:", error);
+    process.exit(1);
   }
+};
 
-  if (isForce) {
-    await FDScheme.deleteMany({});
-    console.log("Cleared existing FD schemes (--force).");
-  }
-
-  const created = await FDScheme.insertMany(DEFAULT_FD_SCHEMES);
-  console.log(`\nSeeded ${created.length} FD schemes successfully:`);
-  for (const s of created) {
-    console.log(
-      `  - [${s.category}] ${s.name} (${s.code}) | ${s.interestRate}%+ | ${s.minTenureMonths}-${s.maxTenureMonths} mo | min ₹${s.minDeposit} [ID: ${s._id}]`
-    );
-  }
-
-  await mongoose.connection.close();
-}
-
-async function clean() {
-  await connectDB();
-  const res = await FDScheme.deleteMany({});
-  console.log(`Removed ${res.deletedCount} FD schemes.`);
-  await mongoose.connection.close();
-}
-
-(isClean ? clean() : seed()).catch((err) => {
-  console.error("Seed FD schemes script failed:", err);
-  process.exit(1);
-});
+seedFD();

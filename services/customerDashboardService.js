@@ -38,6 +38,11 @@ class CustomerDashboardService {
       upcomingEmi: activeLoan?.nextEmiAmount || 0,
       upcomingEmiDate: activeLoan?.nextEmiDate || null,
       activeFD: activeFDs,
+      fds: {
+        totalFdPrincipal: financialOverview.totalFDAmount,
+        activeCount: financialOverview.activeFDCount,
+        list: activeFDs,
+      },
       recentTransactions,
       notifications,
       financialOverview,
@@ -119,21 +124,25 @@ class CustomerDashboardService {
     try {
       const fds = await FixedDeposit.find({
         user: userId,
-        status: { $in: ["active", "matured"] },
+        status: { $in: ["active", "matured", "pending", "info_requested"] },
       }).lean();
 
       return fds.map((fd) => {
-        const depositAmount = fd.depositAmount || fd.principalAmount || 0;
-        const interestEarned = this.calculateInterest(depositAmount, fd.interestRate || 0, fd.tenure || 1);
+        const depositAmount = fd.principalAmount || fd.depositAmount || 0;
+        const tenureMonths = fd.tenureMonths || fd.tenure || 12;
+        const interestEarned = fd.maturityAmount
+          ? Math.max(0, fd.maturityAmount - depositAmount)
+          : this.calculateInterest(depositAmount, fd.interestRate || 0, tenureMonths / 12);
         return {
           id: fd._id,
           depositAmount: depositAmount,
+          principalAmount: depositAmount,
           interestRate: fd.interestRate,
-          tenure: fd.tenure,
+          tenure: tenureMonths,
           startDate: fd.startDate,
           maturityDate: fd.maturityDate,
           interestEarned,
-          maturityAmount: depositAmount + interestEarned,
+          maturityAmount: fd.maturityAmount || (depositAmount + interestEarned),
           status: fd.status,
           daysRemaining: this.calculateDaysRemaining(fd.maturityDate),
         };
@@ -211,8 +220,9 @@ class CustomerDashboardService {
     const activeLoanCount = allLoans.filter((l) => ["approved", "disbursed"].includes(l.status)).length;
 
     const allFDs = await FixedDeposit.find({ user: userId }).lean();
-    const totalFDAmount = allFDs.reduce((sum, fd) => sum + (fd.depositAmount || fd.principalAmount || 0), 0);
-    const activeFDCount = allFDs.filter((fd) => fd.status === "active").length;
+    const validFDs = allFDs.filter((fd) => ["active", "matured", "pending", "info_requested"].includes(fd.status));
+    const totalFDAmount = validFDs.reduce((sum, fd) => sum + (fd.principalAmount || fd.depositAmount || 0), 0);
+    const activeFDCount = validFDs.length;
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);

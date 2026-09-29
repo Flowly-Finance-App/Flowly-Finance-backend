@@ -14,24 +14,7 @@ const fixedDepositSchema = new Schema(
     tenureMonths: { type: Number, required: true },
 
     // Customer-chosen FD details (captured on the "Enter FD Details" step)
-    fdType: {
-      type: String,
-      enum: ["regular", "senior_citizen", "tax_saver", "special", "flexi"],
-      default: "regular",
-    },
-
-    // Set when the customer picked a named FD scheme from the catalog
-    // (FDScheme) rather than a bare fdType + tenure. schemeSnapshot freezes
-    // the scheme's display details (name/code/badge) as they were at the
-    // moment this FD was created, so a worker editing the scheme later never
-    // silently changes what an existing customer sees on an already-opened FD.
-    scheme: { type: Schema.Types.ObjectId, ref: "FDScheme" },
-    schemeSnapshot: {
-      name: String,
-      code: String,
-      category: String,
-      badge: String,
-    },
+    fdType: { type: String, enum: ["regular", "senior_citizen", "tax_saver", "special", "flexi"], default: "regular" },
     interestPayoutOption: {
       type: String,
       enum: ["cumulative", "monthly", "quarterly", "annually"],

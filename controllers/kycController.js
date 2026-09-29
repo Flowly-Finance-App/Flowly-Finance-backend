@@ -27,7 +27,7 @@ export const submitKYC = async (req, res) => {
   const uploaded = []; // Cloudinary assets created by this request (for cleanup)
 
   try {
-    const { dob, gender, address, idType, idNumber } = req.body;
+    const { dob, gender, address, idType, idNumber, panNumber } = req.body;
 
     if (!address || !idType || !idNumber) {
       return res.status(400).json({
@@ -145,6 +145,9 @@ export const submitKYC = async (req, res) => {
         kycRecord.selfieDocument = selfieDoc._id;
         kycRecord.selfieUrl = selfieDoc.fileUrl;
       }
+      if (panNumber) {
+        kycRecord.extractedData = { ...(kycRecord.extractedData || {}), panNumber };
+      }
       kycRecord.verificationStatus = "under_verification";
       kycRecord.rejectionReason = "";
       // A new submission starts OCR and video KYC again from scratch
@@ -168,6 +171,7 @@ export const submitKYC = async (req, res) => {
         aadhaarUrl: aadhaarDoc?.fileUrl,
         selfieDocument: selfieDoc?._id,
         selfieUrl: selfieDoc?.fileUrl,
+        extractedData: panNumber ? { panNumber } : {},
         verificationStatus: "under_verification",
         ocr: { status: ocrEligible ? "processing" : "skipped" },
       });
