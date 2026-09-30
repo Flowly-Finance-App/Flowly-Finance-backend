@@ -2,7 +2,6 @@ import User from "../models/User.js";
 import Account from "../models/Account.js";
 import OTP from "../models/OTP.js";
 import bcrypt from "bcryptjs";
-import { randomInt } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import { sendOTPEmail, sendAccountLockoutEmail } from "../utils/mailer.js";
@@ -104,20 +103,14 @@ export const createBankAccountForUser = async (userId, options = {}) => {
 
 
 
-const OTP_PURPOSES = ["registration", "generate_mpin", "reset_mpin", "login"];
-const OTP_TTL_MS = 5 * 60 * 1000;
-const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 /**
- * Send OTP to the user's own registered email via SMTP.
- * Used for registration, MPIN generation and MPIN reset.
+ * Send OTP to user's email via SMTP
  */
 export const sendOTP = async (req, res) => {
   try {
     const { email, purpose = "registration" } = req.body;
 
-    if (!email || typeof email !== "string") {
+    if (!email) {
       return res.status(400).json({
         message: "Email address is required to send OTP",
       });
@@ -125,64 +118,32 @@ export const sendOTP = async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    if (!EMAIL_REGEX.test(cleanEmail)) {
-      return res.status(400).json({ message: "Please enter a valid email address" });
-    }
-
-    if (!OTP_PURPOSES.includes(purpose)) {
-      return res.status(400).json({ message: "Invalid OTP purpose" });
-    }
-
-    const existingUser = await User.findOne({ email: cleanEmail });
-
+    // Check if user already exists for registration purpose
     if (purpose === "registration") {
+      const existingUser = await User.findOne({ email: cleanEmail });
       if (existingUser) {
         return res.status(400).json({
           message: "User with this email already exists",
         });
       }
-    } else if (!existingUser) {
-      // MPIN generate/reset codes go only to an already-registered email,
-      // so this endpoint can't be used to send codes to arbitrary addresses.
-      return res.status(404).json({
-        message: "No account found with this email. Please register first.",
-      });
     }
 
-    // Resend cooldown, so the endpoint can't be used to spam a user's inbox
-    const recent = await OTP.findOne({ email: cleanEmail, purpose }).sort({ createdAt: -1 });
-    if (recent) {
-      const elapsed = Date.now() - new Date(recent.createdAt).getTime();
-      if (elapsed < OTP_RESEND_COOLDOWN_MS) {
-        const waitSec = Math.ceil((OTP_RESEND_COOLDOWN_MS - elapsed) / 1000);
-        return res.status(429).json({
-          message: `Please wait ${waitSec} second(s) before requesting another code.`,
-        });
-      }
-    }
+    // Generate 6-digit random numeric OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Cryptographically secure 6-digit OTP
-    const otpCode = randomInt(100000, 1000000).toString();
-
-    // Remove any previous OTPs for same email & purpose
+    // Remove any previous unexpired OTPs for same email & purpose
     await OTP.deleteMany({ email: cleanEmail, purpose });
 
+    // Store OTP in database with 5-minute expiry
     await OTP.create({
       email: cleanEmail,
       otp: otpCode,
       purpose,
-      expiresAt: new Date(Date.now() + OTP_TTL_MS),
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes
     });
 
-    // Send to the user's own email address
-    const mailResult = await sendOTPEmail(cleanEmail, otpCode, purpose);
-
-    if (!mailResult?.success) {
-      await OTP.deleteMany({ email: cleanEmail, purpose });
-      return res.status(502).json({
-        message: "We couldn't send the verification email right now. Please try again shortly.",
-      });
-    }
+    // Send email using SMTP helper
+    await sendOTPEmail(cleanEmail, otpCode, purpose);
 
     return res.status(200).json({
       message: `OTP verification code sent successfully to ${cleanEmail}`,
