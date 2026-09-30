@@ -1,9 +1,15 @@
 import nodemailer from "nodemailer";
 
-// Temporary Email Override for Testing / Development
-// All outbound emails (OTP, FD approvals, Security Alerts) are redirected to this address for testing.
-// To send emails to real customer email addresses later, set TEMP_TARGET_EMAIL = null (or set process.env.TEMP_OVERRIDE_EMAIL).
-const TEMP_TARGET_EMAIL = null;
+// Optional testing redirect. By default every email goes to the customer's own
+// registered address. To redirect all mail to one inbox while testing locally,
+// set TEMP_OVERRIDE_EMAIL in .env. The override is always ignored in production.
+const getRecipient = (email) => {
+  const override = process.env.TEMP_OVERRIDE_EMAIL?.trim();
+  if (override && process.env.NODE_ENV !== "production") return override;
+  return email;
+};
+
+const isProduction = () => process.env.NODE_ENV === "production";
 
 /**
  * Creates and returns a Nodemailer transporter instance using environment variables.
@@ -44,7 +50,7 @@ const getTransporter = () => {
 export const sendOTPEmail = async (email, otp, purpose = "registration") => {
   const transporter = getTransporter();
   const fromEmail = process.env.SMTP_FROM || `"Flowly Finance" <no-reply@flowlyfinance.com>`;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+  const targetEmail = getRecipient(email);
 
   const purposeTitleMap = {
     registration: "Account Registration OTP",
@@ -76,6 +82,10 @@ export const sendOTPEmail = async (email, otp, purpose = "registration") => {
   `;
 
   if (!transporter) {
+    if (isProduction()) {
+      console.error("[SMTP] SMTP is not configured; OTP email was not sent.");
+      return { success: false, error: "SMTP is not configured" };
+    }
     console.log(`\n=================================================`);
     console.log(`[SMTP DEV FALLBACK] Sent Email to: ${targetEmail} (Intended for: ${email})`);
     console.log(`[SMTP DEV FALLBACK] Purpose: ${purpose}`);
@@ -94,6 +104,10 @@ export const sendOTPEmail = async (email, otp, purpose = "registration") => {
 
     return { success: true, messageId: info.messageId };
   } catch (err) {
+    if (isProduction()) {
+      console.error(`[SMTP SEND FAILED] ${err.message}`);
+      return { success: false, error: err.message };
+    }
     console.warn(`[SMTP SEND FAILED] ${err.message}. Falling back to console output.`);
     console.log(`\n=================================================`);
     console.log(`[SMTP DEV FALLBACK] Sent Email to: ${targetEmail} (Intended for: ${email})`);
@@ -124,7 +138,7 @@ export const sendOTPEmail = async (email, otp, purpose = "registration") => {
 export const sendFDApprovalEmail = async (email, fd, certificateBuffer) => {
   const transporter = getTransporter();
   const fromEmail = process.env.SMTP_FROM || `"Flowly Finance" <no-reply@flowlyfinance.com>`;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+  const targetEmail = getRecipient(email);
 
   const formatINR = (n) =>
     `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -212,7 +226,7 @@ export const sendFDApprovalEmail = async (email, fd, certificateBuffer) => {
 export const sendAccountLockoutEmail = async (email, userName = "Customer") => {
   const transporter = getTransporter();
   const fromEmail = process.env.SMTP_FROM || `"Flowly Finance" <no-reply@flowlyfinance.com>`;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+  const targetEmail = getRecipient(email);
 
   const htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
