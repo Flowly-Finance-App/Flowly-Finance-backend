@@ -1,14 +1,80 @@
 import nodemailer from "nodemailer";
 
-// Temporary Email Override for Testing / Development
-// All outbound emails (OTP, FD approvals, Security Alerts) are redirected to this address for testing.
-// To send emails to real customer email addresses later, set TEMP_TARGET_EMAIL = null (or set process.env.TEMP_OVERRIDE_EMAIL).
-const TEMP_TARGET_EMAIL = process.env.TEMP_OVERRIDE_EMAIL ?? "mahbubim06@gmail.com";
+// Optional testing redirect. By default every email goes to the customer's own
+// registered address. To redirect all mail to one inbox while testing locally,
+// set TEMP_OVERRIDE_EMAIL in .env. The override is always ignored in production.
+const getRecipient = (email) => {
+  const override = process.env.TEMP_OVERRIDE_EMAIL?.trim();
+  if (override && process.env.NODE_ENV !== "production") return override;
+  return email;
+};
+
+const isProduction = () => process.env.NODE_ENV === "production";
 
 /**
- * Creates and returns a Nodemailer transporter instance using environment variables.
+ * Sends mail through Brevo's HTTPS API. Used when BREVO_API_KEY is set.
+ * Hosts such as Render's free tier block outbound SMTP ports (25/465/587),
+ * but HTTPS (port 443) always works.
+ * Env: BREVO_API_KEY, BREVO_SENDER_EMAIL (must be a verified sender in Brevo),
+ *      BREVO_SENDER_NAME (optional).
+ */
+const parseSenderName = (from) => {
+  const match = /^\s*"?([^"<]*?)"?\s*</.exec(from || "");
+  return (match && match[1].trim()) || "Flowly Finance";
+};
+
+const sendViaBrevo = async ({ from, to, subject, html, attachments = [] }) => {
+  const senderEmail = process.env.BREVO_SENDER_EMAIL?.trim();
+  if (!senderEmail) {
+    throw new Error("BREVO_SENDER_EMAIL is not set (use a sender verified in Brevo)");
+  }
+
+  const payload = {
+    sender: {
+      name: process.env.BREVO_SENDER_NAME?.trim() || parseSenderName(from),
+      email: senderEmail,
+    },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html,
+  };
+
+  if (attachments.length > 0) {
+    payload.attachment = attachments.map((a) => ({
+      name: a.filename,
+      content: Buffer.from(a.content).toString("base64"),
+    }));
+  }
+
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": process.env.BREVO_API_KEY,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Brevo API ${response.status}: ${detail}`);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  return { messageId: data.messageId };
+};
+
+/**
+ * Returns a mail sender with a sendMail() method, or null if nothing is configured.
+ * Prefers the Brevo HTTPS API (works on Render); otherwise falls back to SMTP via Nodemailer.
  */
 const getTransporter = () => {
+  if (process.env.BREVO_API_KEY) {
+    return { sendMail: sendViaBrevo };
+  }
+
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
   const user = process.env.SMTP_USER;
@@ -44,7 +110,7 @@ const getTransporter = () => {
 export const sendOTPEmail = async (email, otp, purpose = "registration") => {
   const transporter = getTransporter();
   const fromEmail = process.env.SMTP_FROM || `"Flowly Finance" <no-reply@flowlyfinance.com>`;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+  const targetEmail = getRecipient(email);
 
   const purposeTitleMap = {
     registration: "Account Registration OTP",
@@ -76,6 +142,10 @@ export const sendOTPEmail = async (email, otp, purpose = "registration") => {
   `;
 
   if (!transporter) {
+    if (isProduction()) {
+      console.error("[SMTP] SMTP is not configured; OTP email was not sent.");
+      return { success: false, error: "SMTP is not configured" };
+    }
     console.log(`\n=================================================`);
     console.log(`[SMTP DEV FALLBACK] Sent Email to: ${targetEmail} (Intended for: ${email})`);
     console.log(`[SMTP DEV FALLBACK] Purpose: ${purpose}`);
@@ -94,6 +164,10 @@ export const sendOTPEmail = async (email, otp, purpose = "registration") => {
 
     return { success: true, messageId: info.messageId };
   } catch (err) {
+    if (isProduction()) {
+      console.error(`[SMTP SEND FAILED] ${err.message}`);
+      return { success: false, error: err.message };
+    }
     console.warn(`[SMTP SEND FAILED] ${err.message}. Falling back to console output.`);
     console.log(`\n=================================================`);
     console.log(`[SMTP DEV FALLBACK] Sent Email to: ${targetEmail} (Intended for: ${email})`);
@@ -124,7 +198,7 @@ export const sendOTPEmail = async (email, otp, purpose = "registration") => {
 export const sendFDApprovalEmail = async (email, fd, certificateBuffer) => {
   const transporter = getTransporter();
   const fromEmail = process.env.SMTP_FROM || `"Flowly Finance" <no-reply@flowlyfinance.com>`;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+  const targetEmail = getRecipient(email);
 
   const formatINR = (n) =>
     `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -212,7 +286,7 @@ export const sendFDApprovalEmail = async (email, fd, certificateBuffer) => {
 export const sendAccountLockoutEmail = async (email, userName = "Customer") => {
   const transporter = getTransporter();
   const fromEmail = process.env.SMTP_FROM || `"Flowly Finance" <no-reply@flowlyfinance.com>`;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+  const targetEmail = getRecipient(email);
 
   const htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #ffffff;">
