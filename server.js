@@ -36,6 +36,30 @@ connectDB();
 
 const app = express();
 
+
+
+const app = express();
+
+// Log every incoming request and its final HTTP status
+app.use((req, res, next) => {
+  const startTime = Date.now();
+
+  console.log("\n========== INCOMING API REQUEST ==========");
+  console.log("Method:", req.method);
+  console.log("URL:", req.originalUrl);
+  console.log("User-Agent:", req.headers["user-agent"] || "Unknown");
+  console.log("Time:", new Date().toISOString());
+
+  res.on("finish", () => {
+    console.log("Status:", res.statusCode);
+    console.log("Duration:", `${Date.now() - startTime} ms`);
+    console.log("========== REQUEST COMPLETED ==========\n");
+  });
+
+  next();
+});
+
+
 app.use(cors());
 
 // Webhook route requires raw body before express.json()
