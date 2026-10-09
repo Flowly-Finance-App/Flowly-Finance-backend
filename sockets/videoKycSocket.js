@@ -35,6 +35,13 @@ export const emitToRoom = (sessionId, event, payload) => {
   if (io) io.to(roomName(sessionId)).emit(event, payload);
 };
 
+/** Send an event to a specific user's personal socket room */
+export const emitToUser = (userId, event, payload) => {
+  if (io && userId) {
+    io.to(`user:${userId.toString()}`).emit(event, payload);
+  }
+};
+
 export const initVideoKycSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: { origin: "*" },
@@ -64,6 +71,11 @@ export const initVideoKycSocket = (httpServer) => {
   });
 
   io.on("connection", (socket) => {
+    // Join personal user room for real-time notifications & balance updates
+    if (socket.data.user?._id) {
+      socket.join(`user:${socket.data.user._id.toString()}`);
+    }
+
     // ---- join a video KYC room ------------------------------------------
     socket.on("join-room", async (payload, ack) => {
       try {

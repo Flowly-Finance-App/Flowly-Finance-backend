@@ -22,6 +22,10 @@ const videoKycSessionSchema = new mongoose.Schema(
     notes: { type: String, default: "" },
     cancelReason: { type: String, default: "" },
     rescheduledCount: { type: Number, default: 0 },
+    reminderSent: { type: Boolean, default: false },
+    reminderSentAt: { type: Date },
+    oneHourReminderSent: { type: Boolean, default: false },
+    oneHourReminderSentAt: { type: Date },
 
     // Customer must agree before the call can be recorded
     recordingConsent: {

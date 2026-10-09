@@ -21,9 +21,14 @@ import customerRoutes from "./routes/customerRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import repaymentRoutes from "./routes/repaymentRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import walletRoutes from "./routes/walletRoutes.js";
+import cashDepositRoutes from "./routes/cashDepositRoutes.js";
+import cashWithdrawalRoutes from "./routes/cashWithdrawalRoutes.js";
 import { startOverdueCheckJob } from "./jobs/overdueCheckJob.js";
 import { startFDMaturityJob } from "./jobs/fdMaturityJob.js";
 import { startEmiReminderJob } from "./jobs/emiReminderJob.js";
+import { startVideoKycReminderJob } from "./jobs/videoKycReminderJob.js";
 
 dotenv.config();
 
@@ -57,6 +62,8 @@ app.get("/", (req, res) => {
       "Video KYC (WebRTC scheduling, calls & recording)",
       "User Notifications System",
       "EMI Repayments & Payment Gateway Integration",
+      "Admin Dashboard, Business Analysis & Worker Monitor",
+      "Offline Cash Deposits (worker-assisted)",
     ],
   });
 });
@@ -72,11 +79,16 @@ app.use("/api/customer/dashboard", customerDashboardRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/repayments", repaymentRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/cash-deposits", cashDepositRoutes);
+app.use("/api/cash-withdrawals", cashWithdrawalRoutes);
 
 // Start background cron / timer jobs
 startOverdueCheckJob();
 startFDMaturityJob();
 startEmiReminderJob();
+startVideoKycReminderJob();
 
 // Global 404 Handler
 app.use((req, res) => {

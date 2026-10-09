@@ -29,6 +29,12 @@ const notificationSchema = new mongoose.Schema(
       enum: ["unread", "read"],
       default: "unread",
     },
+
+    // Optional structured details (e.g. receipt number, amount, new balance)
+    // so the UI can deep-link to the related transaction.
+    meta: {
+      type: mongoose.Schema.Types.Mixed,
+    },
   },
   {
     timestamps: true,

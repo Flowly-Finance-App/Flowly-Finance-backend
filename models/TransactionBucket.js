@@ -39,6 +39,8 @@ transactionBucketSchema.statics.postEntry = async function ({
   refType,
   refId,
   meta,
+  entryId,
+  session,
 }) {
   const periodKey = new Date().toISOString().slice(0, 7);
 
@@ -47,10 +49,19 @@ transactionBucketSchema.statics.postEntry = async function ({
     {
       $setOnInsert: { user: userId, account: accountId, periodKey },
       $push: {
-        entries: { type, amount, description, refType, refId, meta, postedAt: new Date() },
+        entries: {
+          ...(entryId ? { _id: entryId } : {}),
+          type,
+          amount,
+          description,
+          refType,
+          refId,
+          meta,
+          postedAt: new Date(),
+        },
       },
     },
-    { upsert: true, new: true }
+    { upsert: true, new: true, ...(session ? { session } : {}) }
   );
 };
 

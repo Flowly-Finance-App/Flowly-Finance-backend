@@ -124,7 +124,6 @@ export const applyLoan = async (req, res) => {
       personalInformation,
       employmentDetails,
       incomeDetails,
-      bankDetails,
       documents,
     } = req.body;
 
@@ -265,10 +264,11 @@ export const applyLoan = async (req, res) => {
       },
 
       bankDetails: {
-        accountNumber: bankDetails?.accountNumber || account?.accountNumber || "1002345678",
-        bankName: bankDetails?.bankName || "Flowly National Bank",
-        ifscCode: bankDetails?.ifscCode || account?.ifscCode || "FLWL0001024",
-        accountHolderName: bankDetails?.accountHolderName || user.name || "",
+        // Always the applicant's own Flowly account (client-sent bank details are ignored)
+        accountNumber: account?.accountNumber || "",
+        bankName: "Flowly National Bank",
+        ifscCode: account?.ifscCode || "FLWL0001024",
+        accountHolderName: user.name || "",
         isVerified: true,
       },
 

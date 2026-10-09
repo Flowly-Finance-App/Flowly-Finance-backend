@@ -172,6 +172,7 @@ class CustomerDashboardService {
             description: "$entries.description",
             refType: "$entries.refType",
             refId: "$entries.refId",
+            meta: "$entries.meta",
           },
         },
       ]);
@@ -184,6 +185,11 @@ class CustomerDashboardService {
         description: txn.description,
         refType: txn.refType,
         refId: txn.refId,
+        meta: txn.meta || {},
+        category: txn.meta?.category || (txn.type === "credit" ? "cash_deposit" : txn.type),
+        transactionType: txn.meta?.transactionType || (txn.type === "credit" ? "CASH_DEPOSIT" : txn.type),
+        receiptNumber: txn.meta?.receiptNumber || null,
+        balanceAfter: txn.meta?.balanceAfter || null,
       }));
     } catch (error) {
       console.error("Recent Transactions Error:", error);
