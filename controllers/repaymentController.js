@@ -5,7 +5,7 @@ import Account from "../models/Account.js";
 import User from "../models/User.js";
 import { generateSchedule, round2 } from "../utils/emiCalculator.js";
 import paymentGateway from "../services/paymentGateway.js";
-import { creditAccountTopUpFromIntent } from "./depositController.js";
+import { creditTopUpFromIntent, markTopUpFailed } from "../services/walletService.js";
 
 export async function generateScheduleOnDisbursal(loanId) {
   const loan = await LoanApplication.findById(loanId);
@@ -180,19 +180,41 @@ export async function handlePaymentWebhook(req, res) {
     return res.status(400).json({ message: `Webhook signature verification failed: ${err.message}` });
   }
 
-  if (event.type && event.type !== "payment_intent.succeeded") {
-    return res.status(200).json({ received: true });
-  }
-
   const intent = event.data ? event.data.object : event;
 
-  if (intent.metadata?.purpose === "account_topup") {
+  // ---- Add Money (account top-up) events ----
+  if (intent?.metadata?.purpose === "account_topup") {
     try {
-      await creditAccountTopUpFromIntent(intent);
+      switch (event.type) {
+        case undefined: // mock gateway sends the bare intent
+        case "payment_intent.succeeded":
+          await creditTopUpFromIntent(intent);
+          break;
+        case "payment_intent.payment_failed":
+          await markTopUpFailed(intent, "Payment failed");
+          break;
+        case "payment_intent.canceled":
+          await markTopUpFailed(intent, "Payment was cancelled");
+          break;
+        default:
+          break; // other event types are ignored
+      }
       return res.status(200).json({ received: true });
     } catch (err) {
-      return res.status(500).json({ message: err.message });
+      if (err.code === "VERIFY_FAILED") {
+        // Retrying cannot fix a mismatch; log for investigation and acknowledge.
+        console.error(`[STRIPE WEBHOOK] Top-up verification failed for ${intent.id}: ${err.message}`);
+        return res.status(200).json({ received: true, verified: false });
+      }
+      // Anything else (DB hiccup, payment record not written yet): non-2xx so Stripe retries.
+      console.error(`[STRIPE WEBHOOK] Top-up handling error for ${intent.id}:`, err.message);
+      return res.status(err.code === "TOPUP_NOT_FOUND" ? 404 : 500).json({ message: err.message });
     }
+  }
+
+  // ---- Loan EMI repayments: only successful payments matter ----
+  if (event.type && event.type !== "payment_intent.succeeded") {
+    return res.status(200).json({ received: true });
   }
 
   const { loanId, installmentNo } = intent.metadata || {};

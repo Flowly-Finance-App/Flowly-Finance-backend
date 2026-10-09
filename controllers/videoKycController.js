@@ -22,6 +22,10 @@ import {
   LIVENESS_CHALLENGE_TYPES,
 } from "../utils/videoKycRules.js";
 import { emitToRoom } from "../sockets/videoKycSocket.js";
+import {
+  sendVideoKycScheduleEmail,
+  sendVideoKycCancelledEmail,
+} from "../utils/mailer.js";
 
 const userId = (req) => req.user._id || req.user.id;
 
@@ -180,6 +184,20 @@ export const scheduleVideoKyc = async (req, res) => {
       message: `Your video KYC call is scheduled for ${formatIst(session.scheduledAt)} (IST). Keep your original PAN and Aadhaar ready and join from the app at that time.`,
     }).catch((err) => console.error("Notification failed:", err));
 
+    // Send email notification & setup reminder
+    const customerUser = await User.findById(kyc.user).select("name email");
+    const officerUser = await User.findById(officer).select("name email");
+    if (customerUser?.email) {
+      sendVideoKycScheduleEmail(customerUser.email, {
+        userName: customerUser.name || "Customer",
+        scheduledAt: session.scheduledAt,
+        durationMinutes: session.durationMinutes,
+        officerName: officerUser?.name || "Verification Officer",
+        notes: session.notes,
+        isRescheduled: false,
+      }).catch((err) => console.error("Video KYC Schedule email failed:", err));
+    }
+
     return res.status(201).json({ success: true, data: session });
   } catch (err) {
     if (err.code === 11000) {
@@ -224,6 +242,8 @@ export const rescheduleVideoKyc = async (req, res) => {
     session.scheduledAt = when.date;
     session.durationMinutes = duration;
     session.rescheduledCount += 1;
+    session.reminderSent = false;
+    session.reminderSentAt = undefined;
     await session.save();
 
     await sendNotification({
@@ -232,6 +252,19 @@ export const rescheduleVideoKyc = async (req, res) => {
       title: "Video KYC Rescheduled",
       message: `Your video KYC call has been moved to ${formatIst(session.scheduledAt)} (IST).`,
     }).catch((err) => console.error("Notification failed:", err));
+
+    const customerUser = await User.findById(session.customer).select("name email");
+    const officerUser = await User.findById(session.officer).select("name email");
+    if (customerUser?.email) {
+      sendVideoKycScheduleEmail(customerUser.email, {
+        userName: customerUser.name || "Customer",
+        scheduledAt: session.scheduledAt,
+        durationMinutes: session.durationMinutes,
+        officerName: officerUser?.name || "Verification Officer",
+        notes: session.notes,
+        isRescheduled: true,
+      }).catch((err) => console.error("Video KYC Reschedule email failed:", err));
+    }
 
     emitToRoom(session._id, "session-rescheduled", { scheduledAt: session.scheduledAt });
 
@@ -267,6 +300,14 @@ export const cancelVideoKyc = async (req, res) => {
       title: "Video KYC Cancelled",
       message: "Your video KYC call was cancelled. You will be contacted to schedule a new time.",
     }).catch((err) => console.error("Notification failed:", err));
+
+    const customerUser = await User.findById(session.customer).select("name email");
+    if (customerUser?.email) {
+      sendVideoKycCancelledEmail(customerUser.email, {
+        userName: customerUser.name || "Customer",
+        reason: session.cancelReason,
+      }).catch((err) => console.error("Video KYC Cancel email failed:", err));
+    }
 
     emitToRoom(session._id, "call-ended", { reason: "cancelled" });
 

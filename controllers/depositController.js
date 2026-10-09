@@ -9,6 +9,7 @@ import User from "../models/User.js";
 import Document from "../models/Document.js";
 import Payment from "../models/Payment.js";
 import paymentGateway from "../services/paymentGateway.js";
+import { creditTopUp, creditTopUpFromIntent } from "../services/walletService.js";
 import { uploadKycFile, uploadFDCertificate } from "../services/cloudinaryService.js";
 import { generateFDCertificate } from "../utils/fdCertificateGenerator.js";
 import { sendFDApprovalEmail } from "../utils/mailer.js";
@@ -470,51 +471,7 @@ export const initiateAccountTopUp = async (req, res) => {
  * confirmed through either path (or both, in a race) is only ever applied
  * once — the status-guarded findOneAndUpdate is the idempotency guard.
  */
-const creditAccountTopUp = async (payment) => {
-  const claimed = await Payment.findOneAndUpdate(
-    { _id: payment._id, paymentStatus: { $ne: "success" } },
-    { paymentStatus: "success" },
-    { new: true }
-  );
-
-  if (!claimed) {
-    // Already credited by a previous confirm/webhook call.
-    const account = await Account.findById(payment.account);
-    return { alreadyProcessed: true, payment, account };
-  }
-
-  const account = await Account.findById(claimed.account);
-  if (!account) {
-    throw new Error("Linked account not found for top-up payment");
-  }
-
-  account.balance += claimed.amount;
-  await account.save();
-
-  await recordTransaction({
-    accountId: account._id,
-    userId: claimed.user,
-    type: "credit",
-    amount: claimed.amount,
-    description: "Savings account top-up via card payment",
-    refType: "Account",
-    refId: account._id,
-    meta: {
-      category: "account_topup",
-      balanceAfter: account.balance,
-      paymentId: claimed._id,
-      gatewayTransactionId: claimed.transactionReference,
-    },
-  });
-
-  await notify({
-    userId: claimed.user,
-    title: "Money added to your account",
-    message: `₹${claimed.amount} has been added to your savings account. New balance: ₹${account.balance}.`,
-  });
-
-  return { alreadyProcessed: false, payment: claimed, account };
-};
+const creditAccountTopUp = async (payment, intent) => creditTopUp(payment._id, intent);
 
 /**
  * Called by the customer's client after Stripe confirms the card payment.
@@ -550,17 +507,20 @@ export const confirmAccountTopUp = async (req, res) => {
     try {
       intent = await paymentGateway.retrievePaymentIntent(transactionId);
     } catch (err) {
-      console.warn("Payment intent retrieve warning (key/account mismatch):", err.message);
-      intent = { status: "succeeded" };
+      // Never assume success when Stripe can't be reached: nothing is credited.
+      console.error("Payment intent retrieve failed:", err.message);
+      return res.status(502).json({
+        message: "Could not verify the payment with the payment gateway. Please try again shortly.",
+      });
     }
 
-    if (intent && intent.status !== "succeeded") {
+    if (intent.status !== "succeeded") {
       return res.status(400).json({
         message: `Payment has not completed yet (status: ${intent.status}). Try again once it succeeds.`,
       });
     }
 
-    const result = await creditAccountTopUp(payment);
+    const result = await creditAccountTopUp(payment, intent);
     return res.status(200).json({
       message: "Payment confirmed and account credited",
       accountBalance: result.account ? result.account.balance : undefined,
@@ -579,14 +539,7 @@ export const confirmAccountTopUp = async (req, res) => {
  * "account_topup"). Authoritative crediting path for production use.
  */
 export const creditAccountTopUpFromIntent = async (intent) => {
-  const payment = await Payment.findOne({
-    transactionReference: intent.id,
-    purpose: "account_topup",
-  });
-  if (!payment) {
-    throw new Error(`No pending top-up payment found for PaymentIntent ${intent.id}`);
-  }
-  await creditAccountTopUp(payment);
+  await creditTopUpFromIntent(intent);
 };
 
 export const depositFunds = async (req, res) => {

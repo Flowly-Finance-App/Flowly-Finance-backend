@@ -29,6 +29,15 @@ import { uploadFDSupportingDoc } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
+// /account/deposit credits a balance with no payment behind it. It is kept for local
+// testing only; real money must come in through Stripe (/api/wallet/topup/intent).
+const devOnly = (req, res, next) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(403).json({ message: "Direct deposits are disabled. Use Add Money (card payment)." });
+  }
+  next();
+};
+
 // FD Scheme Catalog & Management Endpoints
 router.get("/fd/schemes", protect, listActiveSchemes);
 router.get("/fd/schemes/all", protect, authorize("worker", "admin"), listAllSchemes);
@@ -37,8 +46,11 @@ router.post("/fd/schemes", protect, authorize("worker", "admin"), createScheme);
 router.put("/fd/schemes/:id", protect, authorize("worker", "admin"), updateScheme);
 router.patch("/fd/schemes/:id/toggle", protect, authorize("worker", "admin"), toggleSchemeActive);
 
+import { withdrawFunds } from "../controllers/walletController.js";
+
 // Customer deposit endpoints
-router.post("/account/deposit", protect, depositFunds);
+router.post("/account/deposit", protect, devOnly, depositFunds);
+router.post("/account/withdraw", protect, authorize("customer"), withdrawFunds);
 // "Add Money" step — Stripe top-up when the FD Balance Check comes up short
 router.post("/account/topup/initiate", protect, authorize("customer"), initiateAccountTopUp);
 router.post("/account/topup/confirm", protect, authorize("customer"), confirmAccountTopUp);
