@@ -37,9 +37,6 @@ connectDB();
 const app = express();
 
 
-
-const app = express();
-
 // Log every incoming request and its final HTTP status
 app.use((req, res, next) => {
   const startTime = Date.now();
