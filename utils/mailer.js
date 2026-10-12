@@ -1,48 +1,54 @@
-import nodemailer from "nodemailer";
+import { google } from "googleapis";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 
-// Temporary email override for development only.
-// Keep null to send to the actual recipient.
+// ============================================================
+// FLOWLY FINANCE - GMAIL API EMAIL SERVICE
+// Uses Gmail API over HTTPS instead of SMTP.
+// Supports HTML emails and PDF attachments.
+// ============================================================
+
 const TEMP_TARGET_EMAIL = null;
 
-/**
- * Creates a Nodemailer transporter using Render environment variables.
- */
+// ============================================================
+// GMAIL API CLIENT
+// ============================================================
+
 const getTransporter = () => {
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT
-    ? Number(process.env.SMTP_PORT)
-    : 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const {
+    GMAIL_USER,
+    GMAIL_CLIENT_ID,
+    GMAIL_CLIENT_SECRET,
+    GMAIL_REFRESH_TOKEN,
+  } = process.env;
 
   if (
-    !host ||
-    !user ||
-    !pass ||
-    user.includes("your_email") ||
-    pass.includes("your_app_password")
+    !GMAIL_USER ||
+    !GMAIL_CLIENT_ID ||
+    !GMAIL_CLIENT_SECRET ||
+    !GMAIL_REFRESH_TOKEN
   ) {
     return null;
   }
 
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: {
-      user: user.trim(),
-      pass: pass.replace(/\s+/g, ""),
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+  const oauth2Client = new google.auth.OAuth2(
+    GMAIL_CLIENT_ID,
+    GMAIL_CLIENT_SECRET,
+  );
+
+  oauth2Client.setCredentials({
+    refresh_token: GMAIL_REFRESH_TOKEN,
+  });
+
+  return google.gmail({
+    version: "v1",
+    auth: oauth2Client,
   });
 };
 
-/**
- * Sends an email and throws if SMTP is not configured or sending fails.
- * Never logs OTP values or email content.
- */
+// ============================================================
+// SEND EMAIL THROUGH GMAIL API
+// ============================================================
+
 const sendMailOrThrow = async ({
   transporter,
   from,
@@ -52,53 +58,90 @@ const sendMailOrThrow = async ({
   attachments,
 }) => {
   if (!transporter) {
-    console.error("[SMTP CONFIG ERROR] SMTP credentials are missing.");
+    console.error(
+      "[GMAIL API CONFIG ERROR] Gmail API environment variables are missing.",
+    );
+
     throw new Error("Email service is not configured");
   }
 
   try {
-    const info = await transporter.sendMail({
-      from,
+    const sender = process.env.GMAIL_USER;
+
+    if (!sender) {
+      throw new Error("GMAIL_USER is not configured");
+    }
+
+    // The authorized Gmail account should be the sender.
+    const mail = new MailComposer({
+      from: `"Flowly Finance" <${sender}>`,
       to,
       subject,
       html,
       ...(attachments ? { attachments } : {}),
     });
 
-    console.log(
-      `[SMTP] Email accepted by provider. Message ID: ${info.messageId}`
-    );
+    // Build the MIME message, including any PDF attachments.
+    const messageBuffer = await mail.compile().build();
+
+    // Gmail API requires URL-safe Base64.
+    const rawMessage = messageBuffer
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const response = await transporter.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: rawMessage,
+      },
+    });
+
+    console.log(`[GMAIL API] Email accepted. Message ID: ${response.data.id}`);
 
     return {
       success: true,
-      messageId: info.messageId,
+      messageId: response.data.id,
     };
   } catch (err) {
-    console.error(
-      `[SMTP SEND FAILED] ${err.code || "SMTP_ERROR"}: ${err.message}`
-    );
+    // Never log OTP values, email bodies, or OAuth tokens.
+    console.error("[GMAIL API SEND FAILED]", {
+      code: err.code,
+      status: err.response?.status,
+      message: err.message,
+      details: err.response?.data?.error,
+      description: err.response?.data?.error_description,
+    });
 
     throw new Error("Unable to send email");
   }
 };
 
-/**
- * Shared email template.
- */
+// ============================================================
+// SHARED EMAIL TEMPLATE
+// ============================================================
+
 const emailLayout = (title, content) => `
   <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:20px;border:1px solid #e0e0e0;border-radius:10px;background:#fff;">
     <div style="text-align:center;padding-bottom:20px;border-bottom:1px solid #f0f0f0;">
       <h2 style="color:#5B2E91;margin:0;">Flowly Finance</h2>
     </div>
+
     <div style="padding:20px 0;">
       <h3 style="color:#333;">${title}</h3>
       ${content}
     </div>
+
     <div style="text-align:center;padding-top:15px;border-top:1px solid #f0f0f0;color:#aaa;font-size:11px;">
       &copy; ${new Date().getFullYear()} Flowly Finance. All rights reserved.
     </div>
   </div>
 `;
+
+// ============================================================
+// FORMATTING HELPERS
+// ============================================================
 
 const formatINR = (amount) =>
   `₹${Number(amount || 0).toLocaleString("en-IN", {
@@ -125,27 +168,26 @@ const formatDateTime = (date) =>
 const tableRow = (label, value, bold = false) => `
   <tr>
     <td style="padding:6px 0;color:#888;">${label}</td>
-    <td style="padding:6px 0;color:#111;text-align:right;${bold ? "font-weight:bold;" : ""}">
+    <td style="padding:6px 0;color:#111;text-align:right;${
+      bold ? "font-weight:bold;" : ""
+    }">
       ${value ?? "-"}
     </td>
   </tr>
 `;
 
-/**
- * OTP EMAIL
- */
-export const sendOTPEmail = async (
-  email,
-  otp,
-  purpose = "registration"
-) => {
-  const transporter = getTransporter();
-  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
-  const targetEmail = TEMP_TARGET_EMAIL || email;
+// ============================================================
+// OTP EMAIL
+// ============================================================
 
+export const sendOTPEmail = async (email, otp, purpose = "registration") => {
   if (!email || !otp) {
     throw new Error("Email and OTP are required");
   }
+
+  const transporter = getTransporter();
+  const fromEmail = process.env.GMAIL_USER;
+  const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const purposeTitleMap = {
     registration: "Account Registration OTP",
@@ -154,8 +196,7 @@ export const sendOTPEmail = async (
     login: "Login Verification Code",
   };
 
-  const title =
-    purposeTitleMap[purpose] || "Verification Code";
+  const title = purposeTitleMap[purpose] || "Verification Code";
 
   const html = emailLayout(
     title,
@@ -164,18 +205,21 @@ export const sendOTPEmail = async (
         Use the verification code below to complete your process.
         This code is valid for <strong>5 minutes</strong>.
       </p>
+
       <div style="text-align:center;margin:30px 0;">
         <span style="font-size:32px;font-weight:bold;letter-spacing:6px;color:#5B2E91;background:#F3EEF9;padding:12px 24px;border-radius:8px;">
           ${otp}
         </span>
       </div>
+
       <p style="color:#999;font-size:12px;">
         Intended account: ${email}
       </p>
+
       <p style="color:#999;font-size:12px;">
         If you did not request this code, please ignore this email.
       </p>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -187,17 +231,13 @@ export const sendOTPEmail = async (
   });
 };
 
-/**
- * FIXED DEPOSIT APPROVAL EMAIL
- */
-export const sendFDApprovalEmail = async (
-  email,
-  fd,
-  certificateBuffer
-) => {
+// ============================================================
+// FIXED DEPOSIT APPROVAL EMAIL
+// ============================================================
+
+export const sendFDApprovalEmail = async (email, fd, certificateBuffer) => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const html = emailLayout(
@@ -220,7 +260,7 @@ export const sendFDApprovalEmail = async (
           ? `<p><a href="${fd.certificateUrl}">View / Download Certificate</a></p>`
           : ""
       }
-    `
+    `,
   );
 
   const attachments = certificateBuffer
@@ -243,17 +283,17 @@ export const sendFDApprovalEmail = async (
   });
 };
 
-/**
- * TOP-UP RECEIPT EMAIL
- */
+// ============================================================
+// TOP-UP RECEIPT EMAIL
+// ============================================================
+
 export const sendTopUpReceiptEmail = async (
   email,
   receipt,
-  userName = "Customer"
+  userName = "Customer",
 ) => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const card = receipt.paymentMethod?.last4
@@ -265,15 +305,19 @@ export const sendTopUpReceiptEmail = async (
     `
       <p>Dear <strong>${userName}</strong>,</p>
       <p>${formatINR(receipt.amount)} has been added to your account.</p>
+
       <table style="width:100%;border-collapse:collapse;">
         ${tableRow("Reference No.", receipt.receiptNumber, true)}
-        ${tableRow("Account", `${receipt.account?.accountNumber || ""} (${receipt.account?.accountType || ""})`)}
+        ${tableRow(
+          "Account",
+          `${receipt.account?.accountNumber || ""} (${receipt.account?.accountType || ""})`,
+        )}
         ${tableRow("Paid with", card)}
         ${tableRow("Date & time", formatDateTime(receipt.completedAt || Date.now()))}
         ${tableRow("Amount added", formatINR(receipt.amount), true)}
         ${tableRow("New balance", formatINR(receipt.balanceAfter), true)}
       </table>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -285,17 +329,17 @@ export const sendTopUpReceiptEmail = async (
   });
 };
 
-/**
- * CASH DEPOSIT RECEIPT EMAIL
- */
+// ============================================================
+// CASH DEPOSIT RECEIPT EMAIL
+// ============================================================
+
 export const sendCashDepositReceiptEmail = async (
   email,
   receipt,
-  userName = "Customer"
+  userName = "Customer",
 ) => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const html = emailLayout(
@@ -303,15 +347,19 @@ export const sendCashDepositReceiptEmail = async (
     `
       <p>Dear <strong>${userName}</strong>,</p>
       <p>${formatINR(receipt.amount)} was deposited at your branch.</p>
+
       <table style="width:100%;border-collapse:collapse;">
         ${tableRow("Reference No.", receipt.receiptNumber, true)}
-        ${tableRow("Account", `${receipt.account?.accountNumber || ""} (${receipt.account?.accountType || ""})`)}
+        ${tableRow(
+          "Account",
+          `${receipt.account?.accountNumber || ""} (${receipt.account?.accountType || ""})`,
+        )}
         ${tableRow("Branch", receipt.branch || "-")}
         ${tableRow("Date & time", formatDateTime(receipt.completedAt || Date.now()))}
         ${tableRow("Amount deposited", formatINR(receipt.amount), true)}
         ${tableRow("New balance", formatINR(receipt.updatedBalance), true)}
       </table>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -323,29 +371,28 @@ export const sendCashDepositReceiptEmail = async (
   });
 };
 
-/**
- * ACCOUNT LOCKOUT / SECURITY ALERT EMAIL
- */
-export const sendAccountLockoutEmail = async (
-  email,
-  userName = "Customer"
-) => {
+// ============================================================
+// ACCOUNT LOCKOUT / SECURITY ALERT EMAIL
+// ============================================================
+
+export const sendAccountLockoutEmail = async (email, userName = "Customer") => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const html = emailLayout(
     "Security Alert: Account Suspended",
     `
       <p>Dear <strong>${userName}</strong>,</p>
+
       <p>Your Flowly Finance account has been temporarily suspended for 24 hours because of four consecutive incorrect login or MPIN attempts.</p>
+
       <ul>
         <li>You can reset your MPIN using the Forgot MPIN option.</li>
         <li>Otherwise, access will automatically restore after 24 hours.</li>
         <li>If you did not perform these attempts, contact support.</li>
       </ul>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -357,16 +404,13 @@ export const sendAccountLockoutEmail = async (
   });
 };
 
-/**
- * VIDEO KYC SCHEDULE EMAIL
- */
-export const sendVideoKycScheduleEmail = async (
-  email,
-  details = {}
-) => {
+// ============================================================
+// VIDEO KYC SCHEDULE EMAIL
+// ============================================================
+
+export const sendVideoKycScheduleEmail = async (email, details = {}) => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const {
@@ -378,14 +422,11 @@ export const sendVideoKycScheduleEmail = async (
     isRescheduled = false,
   } = details;
 
-  const formattedTime = new Date(scheduledAt).toLocaleString(
-    "en-IN",
-    {
-      timeZone: "Asia/Kolkata",
-      dateStyle: "full",
-      timeStyle: "short",
-    }
-  );
+  const formattedTime = new Date(scheduledAt).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "full",
+    timeStyle: "short",
+  });
 
   const title = isRescheduled
     ? "KYC Video Call Schedule Updated"
@@ -395,6 +436,7 @@ export const sendVideoKycScheduleEmail = async (
     title,
     `
       <p>Dear <strong>${userName}</strong>,</p>
+
       <p>Your video KYC call schedule has been ${
         isRescheduled ? "updated" : "assigned"
       } by <strong>${officerName}</strong>.</p>
@@ -409,7 +451,7 @@ export const sendVideoKycScheduleEmail = async (
       <p>Keep your PAN and Aadhaar documents ready for your call.</p>
       <p>Ensure you have a stable internet connection and allow camera and microphone access.</p>
       <p>You will receive an automated reminder before the call.</p>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -423,16 +465,13 @@ export const sendVideoKycScheduleEmail = async (
   });
 };
 
-/**
- * VIDEO KYC REMINDER EMAIL
- */
-export const sendVideoKycReminderEmail = async (
-  email,
-  details = {}
-) => {
+// ============================================================
+// VIDEO KYC REMINDER EMAIL
+// ============================================================
+
+export const sendVideoKycReminderEmail = async (email, details = {}) => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const {
@@ -442,24 +481,23 @@ export const sendVideoKycReminderEmail = async (
     officerName = "Verification Officer",
   } = details;
 
-  const formattedTime = new Date(scheduledAt).toLocaleString(
-    "en-IN",
-    {
-      timeZone: "Asia/Kolkata",
-      dateStyle: "medium",
-      timeStyle: "short",
-    }
-  );
+  const formattedTime = new Date(scheduledAt).toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 
   const html = emailLayout(
     "Reminder: Video KYC Call Starts Soon",
     `
       <p>Dear <strong>${userName}</strong>,</p>
+
       <p>Your video KYC call with <strong>${officerName}</strong> starts soon.</p>
+
       <p><strong>Date and time:</strong> ${formattedTime} IST</p>
       <p><strong>Duration:</strong> ${durationMinutes} minutes</p>
       <p>Please keep your PAN and Aadhaar documents ready and open the Flowly app before your call.</p>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -471,16 +509,13 @@ export const sendVideoKycReminderEmail = async (
   });
 };
 
-/**
- * VIDEO KYC CANCELLATION EMAIL
- */
-export const sendVideoKycCancelledEmail = async (
-  email,
-  details = {}
-) => {
+// ============================================================
+// VIDEO KYC CANCELLATION EMAIL
+// ============================================================
+
+export const sendVideoKycCancelledEmail = async (email, details = {}) => {
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const { userName = "Customer", reason = "" } = details;
@@ -489,10 +524,13 @@ export const sendVideoKycCancelledEmail = async (
     "Video KYC Call Cancelled",
     `
       <p>Dear <strong>${userName}</strong>,</p>
+
       <p>Your scheduled Video KYC verification call has been cancelled.</p>
+
       ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+
       <p>Our verification team will contact you regarding a new schedule.</p>
-    `
+    `,
   );
 
   return sendMailOrThrow({
@@ -504,27 +542,24 @@ export const sendVideoKycCancelledEmail = async (
   });
 };
 
-/**
- * CASH WITHDRAWAL RECEIPT EMAIL
- */
-export const sendWithdrawalReceiptEmail = async (
-  email,
-  receipt,
-  pdfBuffer
-) => {
+// ============================================================
+// CASH WITHDRAWAL RECEIPT EMAIL
+// ============================================================
+
+export const sendWithdrawalReceiptEmail = async (email, receipt, pdfBuffer) => {
   if (!email) {
     throw new Error("Recipient email is required");
   }
 
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const html = emailLayout(
     "Cash Withdrawal Receipt",
     `
       <p>Dear <strong>${receipt.customerName || "Customer"}</strong>,</p>
+
       <p>Your cash withdrawal request of <strong>${formatINR(receipt.amount)}</strong> has been processed.</p>
 
       <table style="width:100%;border-collapse:collapse;">
@@ -535,7 +570,7 @@ export const sendWithdrawalReceiptEmail = async (
         ${tableRow("Branch", receipt.branch || "Kochi Main")}
         ${tableRow("Timestamp", formatDateTime(receipt.timestamp || Date.now()))}
       </table>
-    `
+    `,
   );
 
   const attachments = pdfBuffer
@@ -558,30 +593,27 @@ export const sendWithdrawalReceiptEmail = async (
   });
 };
 
-/**
- * EMI REMINDER EMAIL
- */
-export const sendEmiReminderEmail = async (
-  email,
-  d = {}
-) => {
+// ============================================================
+// EMI REMINDER EMAIL
+// ============================================================
+
+export const sendEmiReminderEmail = async (email, d = {}) => {
   if (!email) {
     throw new Error("Recipient email is required");
   }
 
   const transporter = getTransporter();
-  const fromEmail =
-    process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromEmail = process.env.GMAIL_USER;
   const targetEmail = TEMP_TARGET_EMAIL || email;
 
   const dueText = formatDate(d.dueDate);
-  const whenText =
-    d.daysLeft === 1 ? "tomorrow" : `in ${d.daysLeft} days`;
+  const whenText = d.daysLeft === 1 ? "tomorrow" : `in ${d.daysLeft} days`;
 
   const html = emailLayout(
     "EMI Payment Reminder",
     `
       <p>Dear <strong>${d.userName || "Customer"}</strong>,</p>
+
       <p>Your loan EMI of <strong>${formatINR(d.emiAmount)}</strong> is due ${whenText} (${dueText}).</p>
 
       <table style="width:100%;border-collapse:collapse;">
@@ -592,7 +624,7 @@ export const sendEmiReminderEmail = async (
       </table>
 
       <p>If you have already paid this installment, please ignore this email.</p>
-    `
+    `,
   );
 
   return sendMailOrThrow({

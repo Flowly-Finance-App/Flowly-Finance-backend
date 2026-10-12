@@ -17,6 +17,9 @@ const router = express.Router();
 
 // OTP Endpoints (SMTP Email OTP)
 router.post("/otp/send", sendOTP);
+
+console.log("Auth routes mounted at /api/auth");
+
 router.post("/otp/verify", verifyOTP);
 
 // Customer Auth (MPIN & Google OAuth)
